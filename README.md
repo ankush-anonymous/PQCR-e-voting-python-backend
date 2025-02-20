@@ -11,7 +11,7 @@ This is a **Post-Quantum Cryptography (PQC) E-Voting backend** built using **Fas
 First, clone this GitHub repository to your local machine:
 
 ```sh
-git clone https://github.com/YOUR_GITHUB_USERNAME/PQCR-e-voting-python-backend.git
+https://github.com/ankush-anonymous/PQCR-e-voting-python-backend.git
 ```
 
 Move into the project directory:
