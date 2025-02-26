@@ -1,10 +1,14 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
-from oqs import Signature
+from app.oqs_wrapper import Signature  # Update this import for correct path
+import uuid
+import subprocess
 
+# Initialize FastAPI app
 app = FastAPI()
 
+# Data Models (could be moved to schemas.py later for clarity)
 class KeyPairResponse(BaseModel):
     public_key: str
     private_key: str
@@ -14,17 +18,25 @@ class AuthenticateRequest(BaseModel):
     private_key: str
     voter_id: str  # Unique identifier for the voter
 
-
 class VerifyRequest(BaseModel):
     public_key: str
     signature: str
     message: str
 
+class VoteRequest(BaseModel):
+    candidate_id: str  # UUID of the selected candidate
+    public_key: str
+    signature: str
+    voter_id: str
+
+
+@app.get("/")
+async def root():
+    return {"message": "FastAPI Server is Running!"}
+
+# 🔑 Generate post-quantum key pairs
 @app.get("/generate-keypair", response_model=KeyPairResponse)
 async def generate_keypair():
-    """
-    Generate a new Dilithium key pair (public and private keys).
-    """
     try:
         sig = Signature("Dilithium5")
         public_key = sig.generate_keypair()
@@ -33,14 +45,11 @@ async def generate_keypair():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# 🔒 Authenticate voter
 @app.post("/authenticate-voter")
 async def authenticate_voter(request: AuthenticateRequest):
-    """
-    Authenticate a voter by verifying their signature.
-    """
     try:
-        print("Received request:", request.dict())  # Debugging: Print request data
-        
         public_key = bytes.fromhex(request.public_key)
         private_key = bytes.fromhex(request.private_key)
         voter_id = request.voter_id.encode()
@@ -55,12 +64,11 @@ async def authenticate_voter(request: AuthenticateRequest):
             "signature": signature.hex()
         }
     except Exception as e:
-        print("Error in authentication:", str(e))  # Debugging
         raise HTTPException(status_code=500, detail=str(e))
 
 
 
-
+# 🚀 FastAPI entry point
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
