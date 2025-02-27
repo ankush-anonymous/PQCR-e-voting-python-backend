@@ -11,11 +11,15 @@ int main(int argc, char** argv) {
     }
 
     // Initialize OpenFHE context for BFV encryption
-    CryptoContext<DCRTPoly> cc = CryptoContextFactory<DCRTPoly>::genCryptoContextBFV(
-        4096, 65537, HEStd_128_classic);
-    
-    cc->Enable(ENCRYPTION);
-    cc->Enable(SHE);
+    CCParams<CryptoContextBFVRNS> parameters;
+    parameters.SetPlaintextModulus(65537);
+    parameters.SetMultiplicativeDepth(5);
+    parameters.SetSecurityLevel(HEStd_128_classic);
+
+    CryptoContext<DCRTPoly> cc = GenCryptoContext(parameters);
+
+    cc->Enable(PKESchemeFeature::PKE);
+    cc->Enable(PKESchemeFeature::LEVELEDSHE);
 
     // Generate encryption keys
     auto keys = cc->KeyGen();
@@ -34,10 +38,12 @@ int main(int argc, char** argv) {
         std::cerr << "Error: Failed to open file for writing." << std::endl;
         return 1;
     }
-    ciphertext->Serialize(out);
+
+    // Serialize without checking return (Serialize() is void)
+    Serial::Serialize(ciphertext, out, SerType::BINARY);
     out.close();
 
-    // Output encrypted data as confirmation
+    // Output confirmation
     std::cout << "Vote encrypted and saved successfully." << std::endl;
 
     return 0;
