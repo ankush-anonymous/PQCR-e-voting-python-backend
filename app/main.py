@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 import subprocess
+import base64
 
 # Importing PQC Signature wrapper
 from app.oqs_wrapper import Signature  # Ensure correct import
@@ -65,7 +66,14 @@ async def authenticate_voter(request: AuthenticateRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 🗳️ Submit Vote (Encrypts vote using OpenFHE)
+def verify_vote_signature(voter_public_key, candidate_id, voter_id, signature):
+    # The original message that should have been signed
+    message = candidate_id + voter_id
+
+    # Verify signature
+    sig = Signature("Dilithium5")
+    return sig.verify(message.encode(), bytes.fromhex(signature), bytes.fromhex(voter_public_key))
+
 @app.post("/submit-vote")
 async def submit_vote(data: dict):
     try:
@@ -74,26 +82,31 @@ async def submit_vote(data: dict):
         signature = data.get("signature", "")
         voter_id = data.get("voter_id", "")
 
-        # Run the C++ encryption binary with candidate_id
+        # 🛑 Step 1: Verify the Signature Before Proceeding
+        if not verify_vote_signature(public_key, candidate_id, voter_id, signature):
+            raise HTTPException(status_code=403, detail="Invalid vote signature. Unauthorized vote.")
+
+        # 🔐 Step 2: Encrypt the Vote
         result = subprocess.run(["/app/encrypt_vote", candidate_id], capture_output=True, text=True)
 
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail="Encryption failed")
 
-        # Process C++ output to extract the encrypted vote
+        # 📌 Step 3: Process C++ output to extract encrypted vote
         output_lines = result.stdout.strip().split("\n")
         encrypted_vote = None
 
         for i, line in enumerate(output_lines):
             if "=== ENCRYPTED VOTE DATA ===" in line and i + 1 < len(output_lines):
-                encrypted_vote = output_lines[i + 1].strip()  # The actual encrypted data is the next line
+                encrypted_vote = output_lines[i + 1].strip()
                 break
 
         if encrypted_vote is None:
             raise HTTPException(status_code=500, detail="Failed to extract encrypted vote from output")
 
+        # ✅ Step 4: Return Encrypted Vote to Node.js Server
         return {
-            "message": "Vote submitted successfully.",
+            "message": "Vote encrypted successfully.",
             "encrypted_vote": encrypted_vote
         }
     except Exception as e:
