@@ -1,14 +1,15 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
-from app.oqs_wrapper import Signature  # Update this import for correct path
-import uuid
 import subprocess
 
-# Initialize FastAPI app
+# Importing PQC Signature wrapper
+from app.oqs_wrapper import Signature  # Ensure correct import
+
+# Initialize FastAPI
 app = FastAPI()
 
-# Data Models (could be moved to schemas.py later for clarity)
+# 🔑 Data Models
 class KeyPairResponse(BaseModel):
     public_key: str
     private_key: str
@@ -16,7 +17,7 @@ class KeyPairResponse(BaseModel):
 class AuthenticateRequest(BaseModel):
     public_key: str
     private_key: str
-    voter_id: str  # Unique identifier for the voter
+    voter_id: str
 
 class VerifyRequest(BaseModel):
     public_key: str
@@ -24,11 +25,10 @@ class VerifyRequest(BaseModel):
     message: str
 
 class VoteRequest(BaseModel):
-    candidate_id: str  # UUID of the selected candidate
+    candidate_id: str
     public_key: str
     signature: str
     voter_id: str
-
 
 @app.get("/")
 async def root():
@@ -44,7 +44,6 @@ async def generate_keypair():
         return {"public_key": public_key.hex(), "private_key": private_key.hex()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # 🔒 Authenticate voter
 @app.post("/authenticate-voter")
@@ -66,9 +65,41 @@ async def authenticate_voter(request: AuthenticateRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# 🗳️ Submit Vote (Encrypts vote using OpenFHE)
+@app.post("/submit-vote")
+async def submit_vote(data: dict):
+    try:
+        candidate_id = data.get("candidate_id", "default_id")
+        public_key = data.get("public_key", "default_key")
+        signature = data.get("signature", "")
+        voter_id = data.get("voter_id", "")
 
+        # Run the C++ encryption binary with candidate_id
+        result = subprocess.run(["/app/encrypt_vote", candidate_id], capture_output=True, text=True)
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail="Encryption failed")
+
+        # Process C++ output to extract the encrypted vote
+        output_lines = result.stdout.strip().split("\n")
+        encrypted_vote = None
+
+        for i, line in enumerate(output_lines):
+            if "=== ENCRYPTED VOTE DATA ===" in line and i + 1 < len(output_lines):
+                encrypted_vote = output_lines[i + 1].strip()  # The actual encrypted data is the next line
+                break
+
+        if encrypted_vote is None:
+            raise HTTPException(status_code=500, detail="Failed to extract encrypted vote from output")
+
+        return {
+            "message": "Vote submitted successfully.",
+            "encrypted_vote": encrypted_vote
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 🚀 FastAPI entry point
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=True)
