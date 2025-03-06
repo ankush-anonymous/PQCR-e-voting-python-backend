@@ -33,6 +33,34 @@ void initializeOpenFHE() {
     cout << "OpenFHE context and keys initialized successfully" << endl;
 }
 
+
+// A simple Base64 encoding function (for illustration only)
+static const std::string base64_chars =
+             "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+             "abcdefghijklmnopqrstuvwxyz"
+             "0123456789+/";
+
+std::string base64Encode(const std::string &in) {
+    std::string out;
+    int val = 0, valb = -6;
+    for (unsigned char c : in) {
+        val = (val << 8) + c;
+        valb += 8;
+        while (valb >= 0) {
+            out.push_back(base64_chars[(val >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+    if (valb > -6) {
+        out.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
+    }
+    while (out.size() % 4) {
+        out.push_back('=');
+    }
+    return out;
+}
+
+
 // Serialize ciphertext to string and convert to hex
 string encryptAndSerialize(const string& candidateId) {
     try {
@@ -64,15 +92,23 @@ string encryptAndSerialize(const string& candidateId) {
         stringstream os;
         Serial::Serialize(ciphertext, os, SerType::BINARY);
         
-        // Convert binary to hex for display
-        stringstream hexStream;
-        hexStream << std::hex << std::setfill('0');
-        string serializedData = os.str();
-        for (unsigned char c : serializedData) {
-            hexStream << std::setw(2) << static_cast<int>(c);
-        }
+        ////////////////// Convert binary to hex for display//////////////
+        // stringstream hexStream;
+        // hexStream << std::hex << std::setfill('0');
+        // string serializedData = os.str();
+        // for (unsigned char c : serializedData) {
+        //     hexStream << std::setw(2) << static_cast<int>(c);
+        // }
+        // return hexStream.str();
+
+
         
-        return hexStream.str();
+        // Convert binary to Base64 for display
+        string serializedData = os.str();
+        string base64Encoded = base64Encode(serializedData);  // You'll implement or use a Base64 encoder 
+        return base64Encoded;
+
+
     }
     catch (const exception& e) {
         cerr << "Error encrypting vote: " << e.what() << endl;

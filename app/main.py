@@ -81,7 +81,7 @@ async def authenticate_voter(request: AuthenticateRequest):
 
 def verify_vote_signature(voter_public_key, candidate_id, voter_id, signature):
     # The original message that should have been signed
-    message = candidate_id + voter_id
+    message = voter_id
     sig = Signature("Dilithium5")
     return sig.verify(message.encode(), bytes.fromhex(signature), bytes.fromhex(voter_public_key))
 
