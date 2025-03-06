@@ -4,7 +4,7 @@ FROM python:3.9-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for OpenFHE and liboqs
+# Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
@@ -13,45 +13,55 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     libgmp-dev \
     libmpfr-dev \
+    libboost-all-dev \
     pkg-config \
     python3-dev \
     curl \
-    wget && \
-    rm -rf /var/lib/apt/lists/*
+    wget \
+    ninja-build \
+    libsodium-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Clone and Build OpenFHE (Using Your Method)
+# ============================
+# 📌 Install OpenFHE
+# ============================
 RUN git clone https://github.com/openfheorg/openfhe-development.git && \
     cd openfhe-development && \
     mkdir build && cd build && \
     cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local -DWITH_EXAMPLES=OFF && \
-    make -j$(nproc)
+    make -j$(nproc) && \
+    make install
 
-# Set OpenFHE Library Path (Your Method)
-ENV LD_LIBRARY_PATH=/app/openfhe-development/build/lib
+# Set OpenFHE Library Path
+ENV LD_LIBRARY_PATH=/usr/local/lib
 
-# Install Python dependencies
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -r /app/requirements.txt
-
-# Clone and build liboqs
-RUN git clone https://github.com/open-quantum-safe/liboqs.git && \
+# ============================
+# 📌 Install liboqs (Post-Quantum Cryptography)
+# ============================
+RUN git clone --branch main https://github.com/open-quantum-safe/liboqs.git && \
     cd liboqs && \
-    mkdir build && \
-    cd build && \
+    mkdir build && cd build && \
     cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_SHARED_LIBS=ON .. && \
     make -j$(nproc) && \
     make install && \
-    ldconfig  # Refresh the shared library cache
+    ldconfig
 
-# Clone and install liboqs-python
+# Install liboqs-python
 RUN git clone https://github.com/open-quantum-safe/liboqs-python.git && \
     cd liboqs-python && \
     pip install .
 
-# Copy C++ encryption source code
-COPY claude.cpp /app/claude.cpp
 
-# Compile C++ encryption binary using OpenFHE build directory
+# ============================
+# 📌 Install Python Dependencies
+# ============================
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# ============================
+# 📌 Compile C++ OpenFHE Encryption Binary
+# ============================
+COPY claude.cpp /app/claude.cpp
 RUN g++ -o /app/encrypt_vote /app/claude.cpp \
     -I/app/openfhe-development/src/core/include \
     -I/app/openfhe-development/src/pke/include \
@@ -60,14 +70,33 @@ RUN g++ -o /app/encrypt_vote /app/claude.cpp \
     -I/app/openfhe-development/third-party/cereal/include \
     -L/app/openfhe-development/build/lib \
     -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
-
-# Ensure the compiled binary is executable
 RUN chmod +x /app/encrypt_vote
 
-# Copy the entire project directory into the container
+# ============================
+# 📌 Clone and Build Picnic (Picnic-based ZKP)
+# ============================
+# Clone the Picnic repository into /app/picnic
+RUN git clone https://github.com/microsoft/Picnic.git /app/picnic
+
+# Build the Picnic library so that libpicnic.a and libshake.a are produced.
+RUN cd /app/picnic && make -j$(nproc) CFLAGS+='-Wno-error=stringop-overflow -D__LINUX__ -D__X64__'
+
+# ============================
+# 📌 Compile C++ Voting Proof Binary (Picnic-based ZKP)
+# ============================
+# Copy your voting proof C source file (voting_proof.c) into /app
+COPY voting_proof.c /app/voting_proof.c
+RUN gcc -O2 -D__LINUX__ -D__X64__ -Wno-error=stringop-overflow \
+    -I/app/picnic \
+    /app/voting_proof.c -o /app/voting_proof \
+    -L/app/picnic -lpicnic -L/app/picnic/sha3 -lshake
+
+# ============================
+# 📌 Copy the Entire Project Directory
+# ============================
 COPY . .
 
-# Expose the port your server runs on (8000 for FastAPI)
+# Expose the FastAPI port
 EXPOSE 8000
 
 # Set environment variables
