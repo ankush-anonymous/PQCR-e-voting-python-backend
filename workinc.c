@@ -9,6 +9,27 @@
 
 #define DEFAULT_PARAMETER_SET Picnic_L1_FS
 
+char* read_encrypted_vote_from_file(const char* file_path) {
+    FILE* file = fopen(file_path, "r");
+    if (!file) {
+        fprintf(stderr, "Error: Cannot open file %s\n", file_path);
+        return NULL;
+    }
+    fseek(file, 0, SEEK_END);
+    long size = ftell(file);
+    rewind(file);
+    char* data = malloc(size + 1);
+    if (!data) {
+        fprintf(stderr, "Error: Memory allocation failed\n");
+        fclose(file);
+        return NULL;
+    }
+    fread(data, 1, size, file);
+    data[size] = '\0';
+    fclose(file);
+    return data;
+}
+
 uint8_t* base64_to_bytes(const char* base64, size_t* out_len) {
     BIO *bio, *b64;
     size_t len = strlen(base64);
@@ -42,28 +63,6 @@ char* bytes_to_base64(const uint8_t* bytes, size_t len) {
     base64str[bufferPtr->length] = '\0';
     BIO_free_all(bio);
     return base64str;
-}
-
-// Read encrypted vote data from file and return as a Base64 string
-char* read_encrypted_vote_from_file(const char* file_path) {
-    FILE* file = fopen(file_path, "r");
-    if (!file) {
-        fprintf(stderr, "Error: Cannot open file %s\n", file_path);
-        return NULL;
-    }
-    fseek(file, 0, SEEK_END);
-    long size = ftell(file);
-    rewind(file);
-    char* data = malloc(size + 1);
-    if (!data) {
-        fprintf(stderr, "Error: Memory allocation failed\n");
-        fclose(file);
-        return NULL;
-    }
-    fread(data, 1, size, file);
-    data[size] = '\0';
-    fclose(file);
-    return data;
 }
 
 int generate_vote_proof(picnic_privatekey_t* sk, const uint8_t* encrypted_vote,
@@ -131,22 +130,12 @@ int main(int argc, char** argv) {
             return -1;
         }
         const char* file_path = argv[3];
-        
-        // Read the encrypted vote from the file path (already contains Base64 data)
         char* vote_b64 = read_encrypted_vote_from_file(file_path);
-        if (!vote_b64) {
-            fprintf(stderr, "Error: Failed to read encrypted vote from file %s\n", file_path);
-            return -1;
-        }
-        
+        if (!vote_b64) return -1;
         size_t vote_len;
         uint8_t* vote = base64_to_bytes(vote_b64, &vote_len);
         free(vote_b64);
-        if (!vote) {
-            fprintf(stderr, "Error: Failed to decode Base64 from file %s\n", file_path);
-            return -1;
-        }
-        
+        if (!vote) return -1;
         picnic_publickey_t pk;
         picnic_privatekey_t sk;
         int ret = picnic_keygen(param, &pk, &sk);
@@ -155,14 +144,12 @@ int main(int argc, char** argv) {
             free(vote);
             return ret;
         }
-        
         char* pk_b64 = export_public_key(&pk, param);
         if (!pk_b64) {
             fprintf(stderr, "Error: Failed to export public key.\n");
             free(vote);
             return -1;
         }
-        
         char* proof_b64 = NULL;
         ret = generate_vote_proof(&sk, vote, vote_len, param, &proof_b64);
         free(vote);
@@ -171,36 +158,24 @@ int main(int argc, char** argv) {
             free(pk_b64);
             return ret;
         }
-        
         printf("Serialized public key (Base64):\n%s\n", pk_b64);
         printf("Generated ZKP proof (Base64):\n%s\n", proof_b64);
         free(proof_b64);
         free(pk_b64);
     } else if (strcmp(mode, "verify") == 0) {
-        if (argc < 5) {
+        if (argc < 6) {
             fprintf(stderr, "Error: Provide encrypted_vote_file, public_key_base64, and proof_base64 for verify mode.\n");
             return -1;
         }
-        const char* file_path = argv[3];  // File path instead of direct Base64
+        const char* file_path = argv[3];
         const char* pk_b64 = argv[4];
         const char* proof_b64 = argv[5];
-        
-        // Read the encrypted vote from the file
         char* vote_b64 = read_encrypted_vote_from_file(file_path);
-        if (!vote_b64) {
-            fprintf(stderr, "Error: Failed to read encrypted vote from file %s\n", file_path);
-            return -1;
-        }
-        
-        // Process the vote Base64 from file
+        if (!vote_b64) return -1;
         size_t vote_len;
         uint8_t* vote = base64_to_bytes(vote_b64, &vote_len);
         free(vote_b64);
-        if (!vote) {
-            fprintf(stderr, "Error: Failed to decode encrypted vote Base64 from file.\n");
-            return -1;
-        }
-        
+        if (!vote) return -1;
         picnic_publickey_t pk;
         int ret = import_public_key(&pk, pk_b64);
         if (ret != 0) {
@@ -208,19 +183,16 @@ int main(int argc, char** argv) {
             free(vote);
             return -1;
         }
-        
         ret = verify_vote_proof(&pk, vote, vote_len, proof_b64, param);
         free(vote);
         if (ret != 0) {
             fprintf(stderr, "Error: Proof verification failed (code %d)\n", ret);
             return ret;
         }
-        
         printf("Proof verification succeeded.\n");
     } else {
         fprintf(stderr, "Error: Unknown mode. Use 'gen' or 'verify'.\n");
         return -1;
     }
-    
     return 0;
 }

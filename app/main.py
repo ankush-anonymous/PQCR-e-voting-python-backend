@@ -45,10 +45,10 @@ class GenerateVoteProofResponse(BaseModel):
     proof_hex: str
 
 class VerifyVoteProofRequest(BaseModel):
+    voter_id: str
     parameter_set: int
-    encrypted_vote: str
-    public_key_hex: str
-    proof_hex: str
+    public_key_base64: str
+    proof_base64: str
 
 @app.get("/")
 async def root():
@@ -137,42 +137,38 @@ async def submit_vote(data: dict):
 @app.post("/generate-vote-proof", response_model=GenerateVoteProofResponse)
 async def generate_vote_proof_endpoint(req: GenerateVoteProofRequest):
     try:
-        # 📂 Step 1: Locate the encrypted vote file
+        # Step 1: Locate the encrypted vote file
         file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{req.voter_id}.txt")
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="Encrypted vote file not found.")
 
-        # 🔍 Step 2: Log file path to confirm it's correct
         print(f"Using encrypted vote file: {file_path}")
 
-        # 🔑 Step 3: Generate proof using the Picnic ZKP binary
+        # Step 2: Generate proof using the Picnic ZKP binary
         cmd = ["/app/voting_proof", "gen", str(req.parameter_set), file_path]
         result = subprocess.run(cmd, capture_output=True, text=True)
 
-        # 📌 Step 4: Log the raw output for debugging
         print(f"Subprocess stdout:\n{result.stdout}")
         print(f"Subprocess stderr:\n{result.stderr}")
 
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"Error generating vote proof: {result.stderr}")
 
-        # 📌 Step 5: Extract public key and proof from output
+        # Step 3: Extract public key and proof from output (look for Base64 labels)
         pubkey_hex = None
         proof_hex = None
         lines = result.stdout.strip().splitlines()
 
         for i, line in enumerate(lines):
             if "Serialized public key (Base64):" in line and i + 1 < len(lines):
-                pubkey_base64 = lines[i + 1].strip()
+                pubkey_hex = lines[i + 1].strip()
             if "Generated ZKP proof (Base64):" in line and i + 1 < len(lines):
-                proof_base64 = lines[i + 1].strip()
+                proof_hex = lines[i + 1].strip()
 
-
-        if not pubkey_base64 or not proof_base64:
+        if not pubkey_hex or not proof_hex:
             raise HTTPException(status_code=500, detail="Failed to parse output from voting_proof binary.")
 
-        # ✅ Step 6: Return proof & public key
-        return GenerateVoteProofResponse(public_key_hex=pubkey_base64, proof_hex=proof_base64)
+        return GenerateVoteProofResponse(public_key_hex=pubkey_hex, proof_hex=proof_hex)
 
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Error generating vote proof: {e.stderr}")
@@ -180,22 +176,41 @@ async def generate_vote_proof_endpoint(req: GenerateVoteProofRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# New Endpoint: Verify Vote Proof using Picnic (ZKP)
+
 @app.post("/verify-vote-proof")
 async def verify_vote_proof_endpoint(req: VerifyVoteProofRequest):
     try:
-        # Command to verify proof: /app/voting_proof verify <parameter_set> "<encrypted_vote>" "<public_key_hex>" "<proof_hex>"
+        # Step 1: Locate the encrypted vote file
+        file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{req.voter_id}.txt")
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Encrypted vote file not found.")
+
+        print(f"Using encrypted vote file for verification: {file_path}")
+
+        # Command to verify proof: voting_proof verify
         cmd = [
             "/app/voting_proof", "verify", str(req.parameter_set),
-            req.encrypted_vote, req.public_key_hex, req.proof_hex
+            file_path, req.public_key_base64, req.proof_base64
         ]
+        
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        
         if "Proof verification succeeded" in result.stdout:
-            return {"message": "Proof verification succeeded. The vote is valid."}
+            # Delete the file after successful verification.
+            try:
+                os.remove(file_path)
+                print(f"Deleted encrypted vote file: {file_path}")
+            except Exception as del_err:
+                print(f"Warning: Failed to delete file {file_path}: {del_err}")
+            return {"message": "Proof verification succeeded. The vote is valid and the file has been deleted."}
         else:
             raise Exception("Proof verification did not return a success message.")
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Error verifying vote proof: {e.stderr}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    
 
 # 🚀 FastAPI entry point
 if __name__ == "__main__":
