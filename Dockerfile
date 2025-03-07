@@ -89,7 +89,8 @@ COPY voting_proof.c /app/voting_proof.c
 RUN gcc -O2 -D__LINUX__ -D__X64__ -Wno-error=stringop-overflow \
     -I/app/picnic \
     /app/voting_proof.c -o /app/voting_proof \
-    -L/app/picnic -lpicnic -L/app/picnic/sha3 -lshake
+    -L/app/picnic -lpicnic -L/app/picnic/sha3 -lshake \
+    -lssl -lcrypto
 
 # ============================
 # 📌 Copy the Entire Project Directory

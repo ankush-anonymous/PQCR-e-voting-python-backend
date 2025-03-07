@@ -1,3 +1,5 @@
+import os
+from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import subprocess
@@ -5,6 +7,10 @@ import base64
 
 # Importing PQC Signature wrapper
 from app.oqs_wrapper import Signature  # Ensure correct import
+
+# Ensure the folder exists before storing votes
+ENCRYPTED_VOTES_DIR = "encrypted_votes"
+Path(ENCRYPTED_VOTES_DIR).mkdir(parents=True, exist_ok=True)
 
 app = FastAPI()
 
@@ -32,7 +38,7 @@ class VoteRequest(BaseModel):
 # 🔑 Data Models for vote proof endpoints
 class GenerateVoteProofRequest(BaseModel):
     parameter_set: int
-    encrypted_vote: str
+    voter_id: str
 
 class GenerateVoteProofResponse(BaseModel):
     public_key_hex: str
@@ -112,11 +118,18 @@ async def submit_vote(data: dict):
         if encrypted_vote is None:
             raise HTTPException(status_code=500, detail="Failed to extract encrypted vote from output")
 
-        # ✅ Step 4: Return Encrypted Vote to Node.js Server
+        # 📝 Step 4: Save Encrypted Vote to a File
+        file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{voter_id}.txt")
+        with open(file_path, "w") as file:
+            file.write(encrypted_vote)
+
+        # ✅ Step 5: Return Response
         return {
-            "message": "Vote encrypted successfully.",
-            "encrypted_vote": encrypted_vote
+            "message": "Vote encrypted successfully. File saved.",
+            "encrypted_vote": encrypted_vote,
+            "file_path": file_path
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -124,27 +137,47 @@ async def submit_vote(data: dict):
 @app.post("/generate-vote-proof", response_model=GenerateVoteProofResponse)
 async def generate_vote_proof_endpoint(req: GenerateVoteProofRequest):
     try:
-        # Command to generate proof: /app/voting_proof gen <parameter_set> "<encrypted_vote>"
-        cmd = ["/app/voting_proof", "gen", str(req.parameter_set), req.encrypted_vote]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        
-        # Parse the output to extract public key hex and proof hex.
-        # Expected output lines:
-        #   "Serialized public key (hex):" followed by the key on the next line.
-        #   "Generated ZKP proof (hex):" followed by the proof on the next line.
+        # 📂 Step 1: Locate the encrypted vote file
+        file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{req.voter_id}.txt")
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Encrypted vote file not found.")
+
+        # 🔍 Step 2: Log file path to confirm it's correct
+        print(f"Using encrypted vote file: {file_path}")
+
+        # 🔑 Step 3: Generate proof using the Picnic ZKP binary
+        cmd = ["/app/voting_proof", "gen", str(req.parameter_set), file_path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+
+        # 📌 Step 4: Log the raw output for debugging
+        print(f"Subprocess stdout:\n{result.stdout}")
+        print(f"Subprocess stderr:\n{result.stderr}")
+
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Error generating vote proof: {result.stderr}")
+
+        # 📌 Step 5: Extract public key and proof from output
         pubkey_hex = None
         proof_hex = None
         lines = result.stdout.strip().splitlines()
+
         for i, line in enumerate(lines):
             if "Serialized public key (hex):" in line and i + 1 < len(lines):
                 pubkey_hex = lines[i + 1].strip()
             if "Generated ZKP proof (hex):" in line and i + 1 < len(lines):
                 proof_hex = lines[i + 1].strip()
+
         if not pubkey_hex or not proof_hex:
-            raise Exception("Failed to parse output from voting_proof binary.")
+            raise HTTPException(status_code=500, detail="Failed to parse output from voting_proof binary.")
+
+        # ✅ Step 6: Return proof & public key
         return GenerateVoteProofResponse(public_key_hex=pubkey_hex, proof_hex=proof_hex)
+
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Error generating vote proof: {e.stderr}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 # New Endpoint: Verify Vote Proof using Picnic (ZKP)
 @app.post("/verify-vote-proof")
