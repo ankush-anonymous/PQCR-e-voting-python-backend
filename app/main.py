@@ -162,16 +162,17 @@ async def generate_vote_proof_endpoint(req: GenerateVoteProofRequest):
         lines = result.stdout.strip().splitlines()
 
         for i, line in enumerate(lines):
-            if "Serialized public key (hex):" in line and i + 1 < len(lines):
-                pubkey_hex = lines[i + 1].strip()
-            if "Generated ZKP proof (hex):" in line and i + 1 < len(lines):
-                proof_hex = lines[i + 1].strip()
+            if "Serialized public key (Base64):" in line and i + 1 < len(lines):
+                pubkey_base64 = lines[i + 1].strip()
+            if "Generated ZKP proof (Base64):" in line and i + 1 < len(lines):
+                proof_base64 = lines[i + 1].strip()
 
-        if not pubkey_hex or not proof_hex:
+
+        if not pubkey_base64 or not proof_base64:
             raise HTTPException(status_code=500, detail="Failed to parse output from voting_proof binary.")
 
         # ✅ Step 6: Return proof & public key
-        return GenerateVoteProofResponse(public_key_hex=pubkey_hex, proof_hex=proof_hex)
+        return GenerateVoteProofResponse(public_key_hex=pubkey_base64, proof_hex=proof_base64)
 
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Error generating vote proof: {e.stderr}")
