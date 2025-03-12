@@ -15,25 +15,25 @@ Path(ENCRYPTED_VOTES_DIR).mkdir(parents=True, exist_ok=True)
 app = FastAPI()
 
 # 🔑 Data Models for existing endpoints
-class KeyPairResponse(BaseModel):
-    public_key: str
-    private_key: str
+class DilithiumKeyPairResponse(BaseModel):
+    voter_dilithium_public_key: str
+    voter_dilithium_private_key: str
 
-class AuthenticateRequest(BaseModel):
-    public_key: str
-    private_key: str
+class AuthenticateVoterRequest(BaseModel):
+    voter_dilithium_public_key: str
+    voter_dilithium_private_key: str
     voter_id: str
 
-class VerifyRequest(BaseModel):
-    public_key: str
-    signature: str
-    message: str
+class OpenFheKeygenRequest(BaseModel):
+    voter_id: str
+    voter_dilithium_signature: str
+    voter_dilithium_public_key: str
 
-class VoteRequest(BaseModel):
+class EncryptVoteRequest(BaseModel):
     candidate_id: str
-    public_key: str
-    signature: str
     voter_id: str
+    dilithium_signature: str
+    openfhe_public_key: str
 
 # 🔑 Data Models for vote proof endpoints
 class GenerateVoteProofRequest(BaseModel):
@@ -41,110 +41,156 @@ class GenerateVoteProofRequest(BaseModel):
     voter_id: str
 
 class GenerateVoteProofResponse(BaseModel):
-    public_key_hex: str
-    proof_hex: str
+    zkp_public_key: str
+    zkp_proof: str
 
 class VerifyVoteProofRequest(BaseModel):
     voter_id: str
     parameter_set: int
-    public_key_base64: str
-    proof_base64: str
+    zkp_public_key: str
+    zkp_proof: str
+
+
+
+
 
 @app.get("/")
 async def root():
     return {"message": "FastAPI Server is Running!"}
 
 # 🔑 Generate post-quantum key pairs (existing endpoint)
-@app.get("/generate-keypair", response_model=KeyPairResponse)
+@app.get("/generate-voter-dilithium-keypair", response_model=DilithiumKeyPairResponse)
 async def generate_keypair():
     try:
         sig = Signature("Dilithium5")
         public_key = sig.generate_keypair()
         private_key = sig.export_secret_key()
-        return {"public_key": public_key.hex(), "private_key": private_key.hex()}
+        # Correct the keys in the returned dict.
+        return {
+            "voter_dilithium_public_key": public_key.hex(), 
+            "voter_dilithium_private_key": private_key.hex()
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 # 🔒 Authenticate voter (existing endpoint)
 @app.post("/authenticate-voter")
-async def authenticate_voter(request: AuthenticateRequest):
+async def authenticate_voter(request: AuthenticateVoterRequest):
     try:
-        public_key = bytes.fromhex(request.public_key)
-        private_key = bytes.fromhex(request.private_key)
+        # Use the field names defined in the model.
+        public_key = bytes.fromhex(request.voter_dilithium_public_key)
+        private_key = bytes.fromhex(request.voter_dilithium_private_key)
         voter_id = request.voter_id.encode()
 
-        sig = Signature("Dilithium5", private_key)
+        sig = Signature("Dilithium5", private_key)  
         signature = sig.sign(voter_id)
 
         is_authentic = sig.verify(voter_id, signature, public_key)
 
         return {
             "is_authentic": is_authentic,
-            "signature": signature.hex()
+            "voter_dilithium_signature": signature.hex()
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-def verify_vote_signature(voter_public_key, candidate_id, voter_id, signature):
-    # The original message that should have been signed
+    
+def verify_vote_signature(voter_public_key: str, voter_id: str, dilithium_signature: str) -> bool:
+    """
+    Verifies that the voter_id was correctly signed using Dilithium.
+    
+    Parameters:
+      voter_public_key: Hex-encoded voter's public key.
+      voter_id: The voter's identifier (used as the original message).
+      dilithium_signature: Hex-encoded signature over the voter_id.
+      
+    Returns:
+      True if the signature is valid, otherwise False.
+    """
     message = voter_id
     sig = Signature("Dilithium5")
-    return sig.verify(message.encode(), bytes.fromhex(signature), bytes.fromhex(voter_public_key))
+    return sig.verify(message.encode(), bytes.fromhex(dilithium_signature), bytes.fromhex(voter_public_key))
 
-@app.post("/submit-vote")
-async def submit_vote(data: dict):
+def parse_keygen_output(output: str):
+    """
+    Parses the output from the key-generation C++ binary.
+    
+    Expected output format (example):
+        Keys generated successfully.
+        Public Key (Base64):
+        <public_key>
+        
+        Private Key (Base64):
+        <private_key>
+    
+    Returns:
+      A tuple (public_key, private_key) if found, otherwise (None, None).
+    """
     try:
-        candidate_id = data.get("candidate_id", "default_id")
-        public_key = data.get("public_key", "default_key")
-        signature = data.get("signature", "")
-        voter_id = data.get("voter_id", "")
-
-        # 🛑 Step 1: Verify the Signature Before Proceeding
-        if not verify_vote_signature(public_key, candidate_id, voter_id, signature):
-            raise HTTPException(status_code=403, detail="Invalid vote signature. Unauthorized vote.")
-
-        # 🔐 Step 2: Encrypt the Vote
-        result = subprocess.run(["/app/encrypt_vote", candidate_id], capture_output=True, text=True)
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail="Encryption failed")
-
-        # 📌 Step 3: Process C++ output to extract encrypted vote
-        output_lines = result.stdout.strip().split("\n")
-        encrypted_vote = None
-        for i, line in enumerate(output_lines):
-            if "=== ENCRYPTED VOTE DATA ===" in line and i + 1 < len(output_lines):
-                encrypted_vote = output_lines[i + 1].strip()
-                break
-        if encrypted_vote is None:
-            raise HTTPException(status_code=500, detail="Failed to extract encrypted vote from output")
-
-        # 📝 Step 4: Save Encrypted Vote to a File
-        file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{voter_id}.txt")
-        with open(file_path, "w") as file:
-            file.write(encrypted_vote)
-
-        # ✅ Step 5: Return Response
-        return {
-            "message": "Vote encrypted successfully. File saved.",
-            "encrypted_vote": encrypted_vote,
-            "file_path": file_path
-        }
-
+        lines = output.strip().split("\n")
+        public_key = None
+        private_key = None
+        for i, line in enumerate(lines):
+            if "Public Key (Base64):" in line and i + 1 < len(lines):
+                public_key = lines[i + 1].strip()
+            if "Private Key (Base64):" in line and i + 1 < len(lines):
+                private_key = lines[i + 1].strip()
+        return public_key, private_key
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+        
+@app.get("/openfhe-keygen")
+async def get_openfhe_keys(req: OpenFheKeygenRequest):
+    """
+    Verifies the voter's authenticity and then retrieves OpenFHE keys.
+    
+    Steps:
+      1. Verify the voter's signature (voter_id is used as the message).
+      2. If verification passes, call /app/encrypt_vote_keygen to generate keys.
+      3. Parse and return the public and private OpenFHE keys.
+    
+    Returns:
+      A JSON object with keys "openfhe_public_key" and "openfhe_private_key".
+    
+    Raises:
+      HTTPException if verification or key generation fails.
+    """
+    try:
+        voter_id = req.voter_id
+        dilithium_signature = req.voter_dilithium_signature
+        voter_public_key = req.voter_dilithium_public_key
+
+        # Step 1: Verify the voter's signature.
+        if not verify_vote_signature(voter_public_key, voter_id, dilithium_signature):
+            raise HTTPException(status_code=403, detail="Voter signature verification failed")
+        
+        # Step 2: Call the key-generation binary.
+        result = subprocess.run(["/app/encrypt_vote_keygen"], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail="Key generation failed")
+        
+        # Step 3: Parse the output for keys.
+        public_key, private_key = parse_keygen_output(result.stdout)
+        if not public_key or not private_key:
+            raise HTTPException(status_code=500, detail="Failed to extract keys from key generation output")
+        
+        return {"openfhe_public_key": public_key, "openfhe_private_key": private_key}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    
+
 
 # New Endpoint: Generate Vote Proof using Picnic (ZKP)
 @app.post("/generate-vote-proof", response_model=GenerateVoteProofResponse)
 async def generate_vote_proof_endpoint(req: GenerateVoteProofRequest):
     try:
-        # Step 1: Locate the encrypted vote file
+        # Step 1: Locate the encrypted vote file.
         file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{req.voter_id}.txt")
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="Encrypted vote file not found.")
 
         print(f"Using encrypted vote file: {file_path}")
 
-        # Step 2: Generate proof using the Picnic ZKP binary
+        # Step 2: Generate proof using the Picnic ZKP binary.
         cmd = ["/app/voting_proof", "gen", str(req.parameter_set), file_path]
         result = subprocess.run(cmd, capture_output=True, text=True)
 
@@ -154,7 +200,7 @@ async def generate_vote_proof_endpoint(req: GenerateVoteProofRequest):
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"Error generating vote proof: {result.stderr}")
 
-        # Step 3: Extract public key and proof from output (look for Base64 labels)
+        # Step 3: Extract public key and proof from output (look for Base64 labels).
         pubkey_hex = None
         proof_hex = None
         lines = result.stdout.strip().splitlines()
@@ -168,29 +214,27 @@ async def generate_vote_proof_endpoint(req: GenerateVoteProofRequest):
         if not pubkey_hex or not proof_hex:
             raise HTTPException(status_code=500, detail="Failed to parse output from voting_proof binary.")
 
-        return GenerateVoteProofResponse(public_key_hex=pubkey_hex, proof_hex=proof_hex)
+        return GenerateVoteProofResponse(zkp_public_key=pubkey_hex, zkp_proof=proof_hex)
 
     except subprocess.CalledProcessError as e:
         raise HTTPException(status_code=500, detail=f"Error generating vote proof: {e.stderr}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-
 @app.post("/verify-vote-proof")
 async def verify_vote_proof_endpoint(req: VerifyVoteProofRequest):
     try:
-        # Step 1: Locate the encrypted vote file
+        # Step 1: Locate the encrypted vote file.
         file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{req.voter_id}.txt")
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="Encrypted vote file not found.")
 
         print(f"Using encrypted vote file for verification: {file_path}")
 
-        # Command to verify proof: voting_proof verify
+        # Command to verify proof: voting_proof verify.
         cmd = [
             "/app/voting_proof", "verify", str(req.parameter_set),
-            file_path, req.public_key_base64, req.proof_base64
+            file_path, req.zkp_public_key, req.zkp_proof
         ]
         
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
@@ -209,8 +253,6 @@ async def verify_vote_proof_endpoint(req: VerifyVoteProofRequest):
         raise HTTPException(status_code=500, detail=f"Error verifying vote proof: {e.stderr}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-    
 
 # 🚀 FastAPI entry point
 if __name__ == "__main__":

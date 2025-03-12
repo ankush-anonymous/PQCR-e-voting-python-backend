@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+    build-essential \           
     cmake \
     g++ \
     git \
@@ -58,11 +58,17 @@ RUN git clone https://github.com/open-quantum-safe/liboqs-python.git && \
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
+
+# ============================
+# 📌 Copy the Entire Project Directory
+# ============================
+COPY . .
+
+
 # ============================
 # 📌 Compile C++ OpenFHE Encryption Binary
 # ============================
-COPY claude.cpp /app/claude.cpp
-RUN g++ -o /app/encrypt_vote /app/claude.cpp \
+RUN g++ -o /app/encrypt_vote_keygen /app/encrypt_vote_keygen.cpp \
     -I/app/openfhe-development/src/core/include \
     -I/app/openfhe-development/src/pke/include \
     -I/app/openfhe-development/src/binfhe/include \
@@ -70,7 +76,19 @@ RUN g++ -o /app/encrypt_vote /app/claude.cpp \
     -I/app/openfhe-development/third-party/cereal/include \
     -L/app/openfhe-development/build/lib \
     -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
-RUN chmod +x /app/encrypt_vote
+
+RUN g++ -o /app/encrypt_vote /app/encrypt_vote.cpp \
+    -I/app/openfhe-development/src/core/include \
+    -I/app/openfhe-development/src/pke/include \
+    -I/app/openfhe-development/src/binfhe/include \
+    -I/app/openfhe-development/build/src/core \
+    -I/app/openfhe-development/third-party/cereal/include \
+    -L/app/openfhe-development/build/lib \
+    -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
+
+
+
+
 
 # ============================
 # 📌 Clone and Build Picnic (Picnic-based ZKP)
@@ -92,10 +110,6 @@ RUN gcc -O2 -D__LINUX__ -D__X64__ -Wno-error=stringop-overflow \
     -L/app/picnic -lpicnic -L/app/picnic/sha3 -lshake \
     -lssl -lcrypto
 
-# ============================
-# 📌 Copy the Entire Project Directory
-# ============================
-COPY . .
 
 # Expose the FastAPI port
 EXPOSE 8000
