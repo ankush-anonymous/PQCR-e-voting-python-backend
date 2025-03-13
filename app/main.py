@@ -30,7 +30,7 @@ class OpenFheKeygenRequest(BaseModel):
 class EncryptVoteRequest(BaseModel):
     candidate_id: str
     voter_id: str
-    openfhe_public_key: str
+    election_id: str
 
 # 🔑 Data Models for vote proof endpoints
 class GenerateVoteProofRequest(BaseModel):
@@ -188,17 +188,18 @@ async def get_openfhe_keys(req: OpenFheKeygenRequest):
         raise HTTPException(status_code=500, detail=str(e))
     
 
-    
-@app.post("/encrypt-vote")
+@app.post("/encrypt-vote")    
 async def encrypt_vote(req: EncryptVoteRequest):
     """
-    Encrypts a vote using the candidate id and openfhe public key.
+    Encrypts a vote using the candidate id and the OpenFHE public key
+    read from a temporary file in the elections folder.
     
     Steps:
-      1. Call the OpenFHE encryption binary with candidate_id and openfhe_public_key.
-      2. Parse the C++ output to extract the Base64-encoded encrypted vote.
-      3. Save the encrypted vote to a file named "{voter_id}.txt".
-      4. Return a JSON response with a success message, the encrypted vote, and file path.
+      1. Verify the temporary file (named "{election_id}.tmp") exists.
+      2. Call the OpenFHE encryption binary with candidate_id and the temp file path.
+      3. Parse the C++ output to extract the Base64-encoded encrypted vote.
+      4. Save the encrypted vote to a file named "{voter_id}.txt".
+      5. Return a JSON response with a success message, the encrypted vote, and file path.
     
     Raises:
       HTTPException if encryption fails.
@@ -206,33 +207,41 @@ async def encrypt_vote(req: EncryptVoteRequest):
     try:
         candidate_id = req.candidate_id
         voter_id = req.voter_id
-        openfhe_public_key = req.openfhe_public_key
+        election_id = req.election_id
 
-        # Step 1: Call the encryption binary.
+        # Step 1: Verify that the elections temp file exists.
+        elections_folder = "elections"
+        temp_file_path = os.path.join(elections_folder, f"{election_id}.tmp")
+        if not os.path.exists(temp_file_path):
+            raise HTTPException(status_code=500, detail="Election file not found")
+
+        # Step 2: Call the encryption binary with candidate_id and the temp file path.
         result = subprocess.run(
-            ["/app/encrypt_vote", candidate_id, openfhe_public_key],
-            capture_output=True, text=True
+            ["/app/encrypt_vote", candidate_id, temp_file_path],
+            capture_output=True,
+            text=True
         )
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail="Encryption failed")
 
-        # Step 2: Parse the C++ output for the encrypted vote.
+        # Step 3: Parse the C++ output to extract the encrypted vote.
         output_lines = result.stdout.strip().split("\n")
         encrypted_vote = None
         for i, line in enumerate(output_lines):
             if "=== ENCRYPTED VOTE DATA ===" in line and i + 1 < len(output_lines):
                 encrypted_vote = output_lines[i + 1].strip()
                 break
+
         if not encrypted_vote:
             raise HTTPException(status_code=500, detail="Failed to extract encrypted vote from output")
 
-        # Step 3: Save the encrypted vote to a file.
+        # Step 4: Save the encrypted vote to a file.
         file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{voter_id}.txt")
         with open(file_path, "w") as file:
             file.write(encrypted_vote)
 
-        # Step 4: Return response.
-        return { 
+        # Step 5: Return the response.
+        return {
             "message": "Vote encrypted successfully. File saved.",
             "encrypted_vote": encrypted_vote,
             "file_path": file_path
@@ -240,6 +249,7 @@ async def encrypt_vote(req: EncryptVoteRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # New Endpoint: Generate Vote Proof using Picnic (ZKP)
 @app.post("/generate-vote-proof", response_model=GenerateVoteProofResponse)

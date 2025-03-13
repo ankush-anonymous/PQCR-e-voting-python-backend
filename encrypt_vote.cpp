@@ -1,10 +1,12 @@
 #include <iostream>
 #include <sstream>
+#include <fstream>
 #include <string>
 #include <vector>
 #include <iomanip>
 #include <stdexcept>
 #include <functional>
+#include <algorithm>
 #include "openfhe.h"
 
 using namespace std;
@@ -58,12 +60,46 @@ string base64Decode(const string &in) {
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        cout << "Usage: " << argv[0] << " <candidate_id> <public_key_base64>" << endl;
+        cout << "Usage: " << argv[0] << " <candidate_id> <public_key_file_path>" << endl;
         return 1;
     }
     
     string candidateId = argv[1];
-    string publicKeyBase64 = argv[2];
+    string publicKeyFilePath = argv[2];
+    
+    // Open the file and search for the public key.
+    ifstream keyFile(publicKeyFilePath);
+    if (!keyFile.is_open()) {
+        cerr << "Error: Cannot open file: " << publicKeyFilePath << endl;
+        return 1;
+    }
+    
+    string line;
+    string publicKeyBase64;
+    string prefix = "openfhe_public_key:";
+    while (getline(keyFile, line)) {
+        if (line.substr(0, prefix.size()) == prefix) {
+            publicKeyBase64 = line.substr(prefix.size());
+            // Trim whitespace from the extracted key.
+            publicKeyBase64.erase(publicKeyBase64.begin(), 
+                find_if(publicKeyBase64.begin(), publicKeyBase64.end(), [](unsigned char ch) {
+                    return !isspace(ch);
+                })
+            );
+            publicKeyBase64.erase(
+                find_if(publicKeyBase64.rbegin(), publicKeyBase64.rend(), [](unsigned char ch) {
+                    return !isspace(ch);
+                }).base(), publicKeyBase64.end()
+            );
+            break;
+        }
+    }
+    keyFile.close();
+    
+    if (publicKeyBase64.empty()) {
+        cerr << "Error: Public key not found in file" << endl;
+        return 1;
+    }
     
     // Initialize OpenFHE context with the same parameters as used in keygen.
     CCParams<CryptoContextBFVRNS> parameters;
