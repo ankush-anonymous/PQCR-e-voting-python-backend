@@ -25,14 +25,11 @@ class AuthenticateVoterRequest(BaseModel):
     voter_id: str
 
 class OpenFheKeygenRequest(BaseModel):
-    voter_id: str
-    voter_dilithium_signature: str
-    voter_dilithium_public_key: str
+    election_id: str
 
 class EncryptVoteRequest(BaseModel):
     candidate_id: str
     voter_id: str
-    dilithium_signature: str
     openfhe_public_key: str
 
 # 🔑 Data Models for vote proof endpoints
@@ -94,7 +91,7 @@ async def authenticate_voter(request: AuthenticateVoterRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
-def verify_vote_signature(voter_public_key: str, voter_id: str, dilithium_signature: str) -> bool:
+def verify_voter_signature(voter_public_key: str, voter_id: str, dilithium_signature: str) -> bool:
     """
     Verifies that the voter_id was correctly signed using Dilithium.
     
@@ -138,46 +135,111 @@ def parse_keygen_output(output: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
         
-@app.get("/openfhe-keygen")
+@app.post("/openfhe-keygen")
 async def get_openfhe_keys(req: OpenFheKeygenRequest):
     """
-    Verifies the voter's authenticity and then retrieves OpenFHE keys.
+    Generates OpenFHE keys by calling the key-generation binary.
     
     Steps:
-      1. Verify the voter's signature (voter_id is used as the message).
-      2. If verification passes, call /app/encrypt_vote_keygen to generate keys.
-      3. Parse and return the public and private OpenFHE keys.
+      1. Call /app/encrypt_vote_keygen to generate keys.
+      2. Parse and return the public and private OpenFHE keys.
+      3. Create a temporary file named with the election id in the 'elections' folder,
+         saving only the public key.
     
     Returns:
       A JSON object with keys "openfhe_public_key" and "openfhe_private_key".
     
     Raises:
-      HTTPException if verification or key generation fails.
+      HTTPException if key generation, file creation, or parsing fails.
     """
     try:
-        voter_id = req.voter_id
-        dilithium_signature = req.voter_dilithium_signature
-        voter_public_key = req.voter_dilithium_public_key
-
-        # Step 1: Verify the voter's signature.
-        if not verify_vote_signature(voter_public_key, voter_id, dilithium_signature):
-            raise HTTPException(status_code=403, detail="Voter signature verification failed")
-        
-        # Step 2: Call the key-generation binary.
-        result = subprocess.run(["/app/encrypt_vote_keygen"], capture_output=True, text=True)
+        # Call the key-generation binary.
+        result = subprocess.run(
+            ["/app/encrypt_vote_keygen"],
+            capture_output=True,
+            text=True
+        )
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail="Key generation failed")
         
-        # Step 3: Parse the output for keys.
+        # Parse the output for keys.
         public_key, private_key = parse_keygen_output(result.stdout)
         if not public_key or not private_key:
-            raise HTTPException(status_code=500, detail="Failed to extract keys from key generation output")
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to extract keys from key generation output"
+            )
         
-        return {"openfhe_public_key": public_key, "openfhe_private_key": private_key}
+        # Create the elections folder if it doesn't exist.
+        elections_folder = "elections"
+        os.makedirs(elections_folder, exist_ok=True)
+        
+        # Create a temporary file using the election id as the filename,
+        # and save only the public key.
+        temp_file_path = os.path.join(elections_folder, f"{req.election_id}.tmp")
+        with open(temp_file_path, "w") as temp_file:
+            temp_file.write(f"openfhe_public_key: {public_key}\n")
+        
+        return {
+            "openfhe_public_key": public_key,
+            "openfhe_private_key": private_key
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     
 
+    
+@app.post("/encrypt-vote")
+async def encrypt_vote(req: EncryptVoteRequest):
+    """
+    Encrypts a vote using the candidate id and openfhe public key.
+    
+    Steps:
+      1. Call the OpenFHE encryption binary with candidate_id and openfhe_public_key.
+      2. Parse the C++ output to extract the Base64-encoded encrypted vote.
+      3. Save the encrypted vote to a file named "{voter_id}.txt".
+      4. Return a JSON response with a success message, the encrypted vote, and file path.
+    
+    Raises:
+      HTTPException if encryption fails.
+    """
+    try:
+        candidate_id = req.candidate_id
+        voter_id = req.voter_id
+        openfhe_public_key = req.openfhe_public_key
+
+        # Step 1: Call the encryption binary.
+        result = subprocess.run(
+            ["/app/encrypt_vote", candidate_id, openfhe_public_key],
+            capture_output=True, text=True
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail="Encryption failed")
+
+        # Step 2: Parse the C++ output for the encrypted vote.
+        output_lines = result.stdout.strip().split("\n")
+        encrypted_vote = None
+        for i, line in enumerate(output_lines):
+            if "=== ENCRYPTED VOTE DATA ===" in line and i + 1 < len(output_lines):
+                encrypted_vote = output_lines[i + 1].strip()
+                break
+        if not encrypted_vote:
+            raise HTTPException(status_code=500, detail="Failed to extract encrypted vote from output")
+
+        # Step 3: Save the encrypted vote to a file.
+        file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{voter_id}.txt")
+        with open(file_path, "w") as file:
+            file.write(encrypted_vote)
+
+        # Step 4: Return response.
+        return { 
+            "message": "Vote encrypted successfully. File saved.",
+            "encrypted_vote": encrypted_vote,
+            "file_path": file_path
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # New Endpoint: Generate Vote Proof using Picnic (ZKP)
 @app.post("/generate-vote-proof", response_model=GenerateVoteProofResponse)
