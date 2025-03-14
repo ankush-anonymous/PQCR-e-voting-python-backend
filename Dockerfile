@@ -4,7 +4,7 @@ FROM python:3.9-slim
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (added nlohmann-json3-dev to install the missing header)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \           
     cmake \
@@ -20,7 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     ninja-build \
     libsodium-dev \
+    nlohmann-json3-dev \
     && rm -rf /var/lib/apt/lists/*
+
 
 # ============================
 # 📌 Install OpenFHE
@@ -51,19 +53,16 @@ RUN git clone https://github.com/open-quantum-safe/liboqs-python.git && \
     cd liboqs-python && \
     pip install .
 
-
 # ============================
 # 📌 Install Python Dependencies
 # ============================
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-
 # ============================
 # 📌 Copy the Entire Project Directory
 # ============================
 COPY . .
-
 
 # ============================
 # 📌 Compile C++ OpenFHE Encryption Binary
@@ -86,10 +85,6 @@ RUN g++ -o /app/encrypt_vote /app/encrypt_vote.cpp \
     -L/app/openfhe-development/build/lib \
     -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
 
-
-
-
-
 # ============================
 # 📌 Clone and Build Picnic (Picnic-based ZKP)
 # ============================
@@ -110,6 +105,17 @@ RUN gcc -O2 -D__LINUX__ -D__X64__ -Wno-error=stringop-overflow \
     -L/app/picnic -lpicnic -L/app/picnic/sha3 -lshake \
     -lssl -lcrypto
 
+# ============================
+# 📌 Compile C++ Aggregator Binary (New Code)
+# ============================
+RUN g++ -o /app/aggregator /app/aggregator.cpp \
+    -I/app/openfhe-development/src/core/include \
+    -I/app/openfhe-development/src/pke/include \
+    -I/app/openfhe-development/src/binfhe/include \
+    -I/app/openfhe-development/build/src/core \
+    -I/app/openfhe-development/third-party/cereal/include \
+    -L/app/openfhe-development/build/lib \
+    -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
 
 # Expose the FastAPI port
 EXPOSE 8000

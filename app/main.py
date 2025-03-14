@@ -325,6 +325,21 @@ async def verify_vote_proof_endpoint(req: VerifyVoteProofRequest):
         raise HTTPException(status_code=500, detail=f"Error verifying vote proof: {e.stderr}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/receive-votes")
+async def receive_votes_from_node_server():
+    try:
+          # Parse the incoming JSON data.
+        data = request.get_json()
+        votes = data.get("votes", [])
+        
+        # Save the votes to a file.
+        with open("encrypted_votes.json", "w") as f:
+            json.dump(votes, f, indent=4)
+        
+        return {"message": "Votes received and saved","success":true}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 🚀 FastAPI entry point
 if __name__ == "__main__":
