@@ -4,6 +4,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import subprocess
 import base64
+import json
 
 # Importing PQC Signature wrapper
 from app.oqs_wrapper import Signature  # Ensure correct import
@@ -11,6 +12,9 @@ from app.oqs_wrapper import Signature  # Ensure correct import
 # Ensure the folder exists before storing votes
 ENCRYPTED_VOTES_DIR = "encrypted_votes"
 Path(ENCRYPTED_VOTES_DIR).mkdir(parents=True, exist_ok=True)
+
+MAPPING_DIR = "candidate_mappings"
+os.makedirs(MAPPING_DIR, exist_ok=True)
 
 app = FastAPI()
 
@@ -47,6 +51,9 @@ class VerifyVoteProofRequest(BaseModel):
     zkp_public_key: str
     zkp_proof: str
 
+class StoreMappingRequest(BaseModel):
+    election_id: str
+    mapping: dict
 
 
 
@@ -249,6 +256,30 @@ async def encrypt_vote(req: EncryptVoteRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/store-candidate-mapping")
+async def store_mapping(request: StoreMappingRequest):
+    try:
+        # Extract data from request model
+        election_id = request.election_id
+        mapping = request.mapping
+
+        # Define file path
+        file_path = os.path.join(MAPPING_DIR, f"{election_id}.json")
+
+        # Store mapping as JSON
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(mapping, f, indent=4)
+
+        return {
+            "message": "Candidate mapping stored successfully",
+            "election_id": election_id
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 
 # New Endpoint: Generate Vote Proof using Picnic (ZKP)
