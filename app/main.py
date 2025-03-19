@@ -195,43 +195,59 @@ async def get_openfhe_keys(req: OpenFheKeygenRequest):
         raise HTTPException(status_code=500, detail=str(e))
     
 
-@app.post("/encrypt-vote")    
+@app.post("/encrypt-vote")
 async def encrypt_vote(req: EncryptVoteRequest):
     """
-    Encrypts a vote using the candidate id and the OpenFHE public key
-    read from a temporary file in the elections folder.
+    Encrypts a vote using one-hot encoding based on the candidate ID.
     
     Steps:
-      1. Verify the temporary file (named "{election_id}.tmp") exists.
-      2. Call the OpenFHE encryption binary with candidate_id and the temp file path.
-      3. Parse the C++ output to extract the Base64-encoded encrypted vote.
-      4. Save the encrypted vote to a file named "{voter_id}.txt".
-      5. Return a JSON response with a success message, the encrypted vote, and file path.
-    
+      1. Verify the candidate mapping JSON file exists.
+      2. Load the candidate mapping and create a one-hot encoded vector.
+      3. Call the OpenFHE encryption binary with the one-hot encoded vector.
+      4. Parse the C++ output to extract the encrypted vote.
+      5. Save the encrypted vote to a file.
+      6. Return a JSON response with success message, encrypted vote, and file path.
+
     Raises:
       HTTPException if encryption fails.
     """
     try:
-        candidate_id = req.candidate_id
-        voter_id = req.voter_id
         election_id = req.election_id
+        voter_id = req.voter_id
+        candidate_id = req.candidate_id
 
-        # Step 1: Verify that the elections temp file exists.
-        elections_folder = "elections"
-        temp_file_path = os.path.join(elections_folder, f"{election_id}.tmp")
-        if not os.path.exists(temp_file_path):
-            raise HTTPException(status_code=500, detail="Election file not found")
+        # Step 1: Load candidate mapping from JSON file
+        mapping_file_path = os.path.join(MAPPING_DIR, f"{election_id}.json")
+        if not os.path.exists(mapping_file_path):
+            raise HTTPException(status_code=500, detail="Candidate mapping file not found")
 
-        # Step 2: Call the encryption binary with candidate_id and the temp file path.
+        with open(mapping_file_path, "r") as file:
+            candidate_mapping = json.load(file)
+
+        # Step 2: Create a one-hot encoded vector
+        num_candidates = len(candidate_mapping)
+        one_hot_vector = [0] * num_candidates
+
+        if candidate_id not in candidate_mapping:
+            raise HTTPException(status_code=400, detail="Invalid candidate ID")
+
+        candidate_index = candidate_mapping[candidate_id]
+        one_hot_vector[candidate_index] = 1
+
+        print(f"✅ One-hot vector for candidate '{candidate_id}': {one_hot_vector}")
+
+        # Step 3: Convert vector to string and call encryption binary
+        vector_str = " ".join(map(str, one_hot_vector))
         result = subprocess.run(
-            ["/app/encrypt_vote", candidate_id, temp_file_path],
+            ["/app/encrypt_vote", vector_str, mapping_file_path],
             capture_output=True,
             text=True
         )
+
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail="Encryption failed")
 
-        # Step 3: Parse the C++ output to extract the encrypted vote.
+        # Step 4: Extract the encrypted vote from C++ output
         output_lines = result.stdout.strip().split("\n")
         encrypted_vote = None
         for i, line in enumerate(output_lines):
@@ -240,16 +256,17 @@ async def encrypt_vote(req: EncryptVoteRequest):
                 break
 
         if not encrypted_vote:
-            raise HTTPException(status_code=500, detail="Failed to extract encrypted vote from output")
+            raise HTTPException(status_code=500, detail="Failed to extract encrypted vote")
 
-        # Step 4: Save the encrypted vote to a file.
+        # Step 5: Save the encrypted vote to a file
         file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{voter_id}.txt")
         with open(file_path, "w") as file:
             file.write(encrypted_vote)
 
-        # Step 5: Return the response.
+        # Step 6: Return the response
         return {
-            "message": "Vote encrypted successfully. File saved.",
+            "message": "Vote encrypted successfully using one-hot encoding.",
+            "one_hot_vector": one_hot_vector,
             "encrypted_vote": encrypted_vote,
             "file_path": file_path
         }
@@ -279,8 +296,6 @@ async def store_mapping(request: StoreMappingRequest):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
 
 # New Endpoint: Generate Vote Proof using Picnic (ZKP)
 @app.post("/generate-vote-proof", response_model=GenerateVoteProofResponse)

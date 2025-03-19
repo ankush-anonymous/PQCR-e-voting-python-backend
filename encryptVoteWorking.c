@@ -12,7 +12,7 @@
 using namespace std;
 using namespace lbcrypto;
 
-// Base64 encoding function
+// Base64 encoding function.
 static const string base64_chars =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
     "abcdefghijklmnopqrstuvwxyz"
@@ -38,7 +38,7 @@ string base64Encode(const string &in) {
     return out;
 }
 
-// Base64 decoding function
+// Simple Base64 decoding function.
 string base64Decode(const string &in) {
     string out;
     vector<int> T(256, -1);
@@ -60,44 +60,28 @@ string base64Decode(const string &in) {
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        cout << "Usage: " << argv[0] << " \"<one-hot-vector>\" <public_key_file_path>" << endl;
+        cout << "Usage: " << argv[0] << " <candidate_id> <public_key_file_path>" << endl;
         return 1;
     }
-
-    string oneHotVectorStr = argv[1]; // Space-separated one-hot encoded vector
+    
+    string candidateId = argv[1];
     string publicKeyFilePath = argv[2];
-
-    // ✅ Step 1: Parse the one-hot vector
-    vector<int64_t> voteVector;
-    stringstream ss(oneHotVectorStr);
-    int64_t value;
-    while (ss >> value) {
-        voteVector.push_back(value);
-    }
-
-    if (voteVector.empty()) {
-        cerr << "Error: Invalid one-hot vector input" << endl;
-        return 1;
-    }
-
-    cout << "✅ One-hot vector parsed successfully: ";
-    for (int v : voteVector) cout << v << " ";
-    cout << endl;
-
-    // ✅ Step 2: Read the public key from file
+    
+    // Open the file and search for the public key.
     ifstream keyFile(publicKeyFilePath);
     if (!keyFile.is_open()) {
         cerr << "Error: Cannot open file: " << publicKeyFilePath << endl;
         return 1;
     }
-
+    
     string line;
     string publicKeyBase64;
     string prefix = "openfhe_public_key:";
     while (getline(keyFile, line)) {
         if (line.substr(0, prefix.size()) == prefix) {
             publicKeyBase64 = line.substr(prefix.size());
-            publicKeyBase64.erase(publicKeyBase64.begin(),
+            // Trim whitespace from the extracted key.
+            publicKeyBase64.erase(publicKeyBase64.begin(), 
                 find_if(publicKeyBase64.begin(), publicKeyBase64.end(), [](unsigned char ch) {
                     return !isspace(ch);
                 })
@@ -111,13 +95,13 @@ int main(int argc, char* argv[]) {
         }
     }
     keyFile.close();
-
+    
     if (publicKeyBase64.empty()) {
         cerr << "Error: Public key not found in file" << endl;
         return 1;
     }
-
-    // ✅ Step 3: Initialize OpenFHE context
+    
+    // Initialize OpenFHE context with the same parameters as used in keygen.
     CCParams<CryptoContextBFVRNS> parameters;
     parameters.SetPlaintextModulus(65537);
     parameters.SetMultiplicativeDepth(1);
@@ -126,59 +110,42 @@ int main(int argc, char* argv[]) {
     cryptoContext->Enable(PKE);
     cryptoContext->Enable(KEYSWITCH);
     cryptoContext->Enable(LEVELEDSHE);
-
-    if (!cryptoContext) {
-        cerr << "Error: Failed to initialize OpenFHE CryptoContext" << endl;
-        return 1;
-    }
-
-    // ✅ Step 4: Deserialize the provided public key
+    
+    // Deserialize the provided public key.
     string publicKeyBinary = base64Decode(publicKeyBase64);
-    if (publicKeyBinary.empty()) {
-        cerr << "Error: Decoded public key is empty" << endl;
-        return 1;
-    }
-
     stringstream publicStream(publicKeyBinary);
     PublicKey<DCRTPoly> publicKey;
-    bool deserializationSuccess = Serial::Deserialize(publicKey, publicStream, SerType::BINARY);
-    if (!deserializationSuccess) {
-        cerr << "Error: Failed to deserialize public key" << endl;
-        return 1;
+    Serial::Deserialize(publicKey, publicStream, SerType::BINARY);
+    
+    // Convert candidateId to a vote value.
+    int64_t voteValue;
+    try {
+        // If candidateId is long (e.g., a UUID), hash it.
+        if (candidateId.size() > 10) {
+            hash<string> hasher;
+            voteValue = static_cast<int64_t>(hasher(candidateId) % 1000);
+        } else {
+            voteValue = stoll(candidateId);
+        }
+    } catch (...) {
+        voteValue = 1;
     }
-
-    cout << "✅ Public key deserialized successfully" << endl;
-
-    // ✅ Step 5: Create plaintext from the one-hot vector
+    
+    vector<int64_t> voteVector = { voteValue };
     Plaintext plaintext = cryptoContext->MakePackedPlaintext(voteVector);
-
-    // ✅ Step 6: Encrypt the plaintext vote using the public key
+    
+    // Encrypt the plaintext vote using the deserialized public key.
     auto ciphertext = cryptoContext->Encrypt(publicKey, plaintext);
-
-    // ✅ Step 7: Serialize the ciphertext to binary and then Base64 encode
+    
+    // Serialize the ciphertext to binary and then Base64 encode.
     stringstream os;
-    bool serializationSuccess = Serial::Serialize(ciphertext, os, SerType::BINARY);
-    if (!serializationSuccess) {
-        cerr << "Error: Failed to serialize ciphertext" << endl;
-        return 1;
-    }
-
+    Serial::Serialize(ciphertext, os, SerType::BINARY);
     string serializedData = os.str();
-    if (serializedData.empty()) {
-        cerr << "Error: Serialized ciphertext is empty" << endl;
-        return 1;
-    }
-
     string encryptedVoteBase64 = base64Encode(serializedData);
-    if (encryptedVoteBase64.empty()) {
-        cerr << "Error: Base64 encryption result is empty" << endl;
-        return 1;
-    }
-
-    // ✅ Step 8: Output the encrypted vote
+    
     cout << "=== ENCRYPTED VOTE DATA ===" << endl;
     cout << encryptedVoteBase64 << endl;
     cout << "===========================" << endl;
-
+    
     return 0;
 }
