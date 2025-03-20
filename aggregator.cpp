@@ -3,148 +3,120 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <map>
-#include <functional>
-#include <algorithm>
-#include <stdexcept>
-#include "nlohmann/json.hpp"
 #include "openfhe.h"
+#include <nlohmann/json.hpp>
+#include <exception>
 
 using namespace std;
 using namespace lbcrypto;
 using json = nlohmann::json;
 
-// Base64 decoding function (as provided)
-static const string base64_chars = 
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "abcdefghijklmnopqrstuvwxyz"
-    "0123456789+/";
+int main(int argc, char* argv[]) {
+    // (Optional) Register all serializable types if needed.
+    // Serial::RegisterAllPalisadeSerialization();  // Uncomment if available/required
 
-string base64Decode(const string &in) {
-    string out;
-    vector<int> T(256, -1);
-    for (int i = 0; i < 64; i++) {
-        T[base64_chars[i]] = i;
-    }
-    int val = 0, valb = -8;
-    for (unsigned char c : in) {
-        if (T[c] == -1) break;
-        val = (val << 6) + T[c];
-        valb += 6;
-        if (valb >= 0) {
-            out.push_back(char((val >> valb) & 0xFF));
-            valb -= 8;
-        }
-    }
-    return out;
-}
-
-// Compute the vote value from the candidate ID, using the same logic as your encryptor.
-int64_t computeVoteValue(const string &candidateId) {
-    try {
-        if (candidateId.size() > 10) {
-            hash<string> hasher;
-            return static_cast<int64_t>(hasher(candidateId) % 1000);
-        } else {
-            return stoll(candidateId);
-        }
-    } catch (...) {
+    if (argc != 2) {
+        cerr << "Usage: " << argv[0] << " <votes_file>" << endl;
         return 1;
     }
-}
-
-int main() {
-    // Read the JSON file containing votes.
-    ifstream inFile("encrypted_votes.json");
-    if (!inFile.is_open()) {
-        cerr << "Error: Cannot open encrypted_votes.json" << endl;
-        return 1;
-    }
-    json votesData;
-    inFile >> votesData;
-    inFile.close();
-
-    // Initialize the OpenFHE crypto context using the same parameters as keygen/encryption.
-    CCParams<CryptoContextBFVRNS> parameters;
-    parameters.SetPlaintextModulus(65537);
-    parameters.SetMultiplicativeDepth(1);
+    string votesFile = argv[1];
+    string outputFile = votesFile.substr(0, votesFile.find_last_of('.')) + "_aggregated_result.json";
     
-    CryptoContext<DCRTPoly> cryptoContext = GenCryptoContext(parameters);
-    cryptoContext->Enable(PKE);
-    cryptoContext->Enable(KEYSWITCH);
-    cryptoContext->Enable(LEVELEDSHE);
-
-    // Map to store the aggregated ciphertexts (one per candidate).
-    map<string, Ciphertext<DCRTPoly>> aggregatedVotes;
-
-    // Process each vote in the JSON.
-    for (const auto &vote : votesData["votes"]) {
-        string candidate = vote["candidate"];
-        string encryptedVoteBase64 = vote["encrypted_vote"];
-
-        // Base64 decode the ciphertext.
-        string decoded = base64Decode(encryptedVoteBase64);
-        stringstream ss(decoded);
-
-        // Deserialize the ciphertext.
-        Ciphertext<DCRTPoly> ct;
-        Serial::Deserialize(ct, ss, SerType::BINARY);
-
-        // Homomorphically aggregate votes for the same candidate.
-        if (aggregatedVotes.find(candidate) != aggregatedVotes.end()) {
-            aggregatedVotes[candidate] = cryptoContext->EvalAdd(aggregatedVotes[candidate], ct);
-        } else {
-            aggregatedVotes[candidate] = ct;
-        }
-    }
-
-    // Read the private key from a text file (assumed to contain only the Base64-encoded key).
-    ifstream pkFile("private_key.txt");
-    if (!pkFile.is_open()) {
-        cerr << "Error: Cannot open private_key.txt" << endl;
+    // Read votes from JSON file
+    cout << "Reading votes from " << votesFile << endl;
+    ifstream votesStream(votesFile);
+    if (!votesStream.is_open()) {
+        cerr << "Error: Could not open votes file." << endl;
         return 1;
     }
-    string privateKeyBase64;
-    getline(pkFile, privateKeyBase64);
-    pkFile.close();
-
-    // Remove any leading/trailing whitespace.
-    privateKeyBase64.erase(privateKeyBase64.begin(), 
-        find_if(privateKeyBase64.begin(), privateKeyBase64.end(), [](unsigned char ch) {
-            return !isspace(ch);
-        })
-    );
-    privateKeyBase64.erase(
-        find_if(privateKeyBase64.rbegin(), privateKeyBase64.rend(), [](unsigned char ch) {
-            return !isspace(ch);
-        }).base(), privateKeyBase64.end()
-    );
-
-    // Decode and deserialize the private key.
-    string decodedPK = base64Decode(privateKeyBase64);
-    stringstream pkStream(decodedPK);
-    PrivateKey<DCRTPoly> secretKey;
-    Serial::Deserialize(secretKey, pkStream, SerType::BINARY);
-
-    // Decrypt each candidate’s aggregated vote and compute the vote count.
-    cout << "Vote tally results:" << endl;
-    for (const auto &entry : aggregatedVotes) {
-        const string &candidate = entry.first;
-        Ciphertext<DCRTPoly> aggregatedCt = entry.second;
-
-        Plaintext plaintext;
-        cryptoContext->Decrypt(secretKey, aggregatedCt, &plaintext);
-
-        // Retrieve the packed plaintext vector.
-        std::vector<int64_t> values = plaintext->GetPackedValue();
-        int64_t aggregatedValue = values[0];
-
-        int64_t voteValue = computeVoteValue(candidate);
-        // The vote count is the decrypted aggregated value divided by the candidate’s vote value.
-        int64_t voteCount = (voteValue != 0) ? (aggregatedValue / voteValue) : 0;
-
-        cout << "Candidate " << candidate << " has " << voteCount << " votes." << endl;
+    
+    json votesJson;
+    try {
+        votesStream >> votesJson;
+    } catch (const exception& e) {
+        cerr << "Error parsing JSON: " << e.what() << endl;
+        return 1;
     }
-
+    votesStream.close();
+    
+    // Deserialize crypto context
+    cout << "Deserializing crypto context..." << endl;
+    CryptoContext<DCRTPoly> cc;
+    if (!Serial::DeserializeFromFile("cryptocontext.txt", cc, SerType::BINARY)) {
+        cerr << "Error: Could not load crypto context." << endl;
+        return 1;
+    }
+    
+    // Process votes
+    vector<string> encryptedVotes;
+    try {
+        for (const auto& voteObj : votesJson["votes"]) {
+            encryptedVotes.push_back(voteObj["encrypted_vote"]);
+        }
+    } catch (const exception& e) {
+        cerr << "Error extracting votes: " << e.what() << endl;
+        return 1;
+    }
+    
+    cout << "Processing " << encryptedVotes.size() << " votes..." << endl;
+    
+    // Deserialize the first vote to initialize aggregation
+    if (encryptedVotes.empty()) {
+        cerr << "Error: No votes found." << endl;
+        return 1;
+    }
+    
+    Ciphertext<DCRTPoly> aggregatedVote;
+    bool firstVote = true;
+    
+    for (const auto& encVote : encryptedVotes) {
+        Ciphertext<DCRTPoly> currVote;
+        istringstream iss(encVote);
+        try {
+            Serial::Deserialize(currVote, iss, SerType::BINARY);
+        } catch (const exception& e) {
+            cerr << "Error deserializing a vote: " << e.what() << endl;
+            return 1;
+        }
+        
+        if (firstVote) {
+            aggregatedVote = currVote;
+            firstVote = false;
+        } else {
+            try {
+                aggregatedVote = cc->EvalAdd(aggregatedVote, currVote);
+            } catch (const exception& e) {
+                cerr << "Error during vote aggregation: " << e.what() << endl;
+                return 1;
+            }
+        }
+    }
+    
+    // Serialize the final aggregated ciphertext
+    ostringstream oss;
+    try {
+        Serial::Serialize(aggregatedVote, oss, SerType::BINARY);
+    } catch (const exception& e) {
+        cerr << "Error serializing aggregated vote: " << e.what() << endl;
+        return 1;
+    }
+    string serializedResult = oss.str();
+    
+    // Output results to file
+    ofstream outFile(outputFile);
+    if (!outFile.is_open()) {
+        cerr << "Error: Could not open output file." << endl;
+        return 1;
+    }
+    
+    json resultJson;
+    resultJson["total_votes"] = encryptedVotes.size();
+    resultJson["aggregated_encrypted_vote"] = serializedResult;
+    
+    outFile << resultJson.dump(4); // Pretty print with 4-space indent
+    outFile.close();
+    
+    cout << "Vote aggregation complete. Encrypted result saved to " << outputFile << endl;
+    
     return 0;
 }

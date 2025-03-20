@@ -3,6 +3,7 @@
 #include <string>
 #include <iomanip>
 #include <functional>
+#include <fstream>
 #include "openfhe.h"
 
 using namespace std;
@@ -45,6 +46,23 @@ int main() {
     cryptoContext->Enable(KEYSWITCH);
     cryptoContext->Enable(LEVELEDSHE);
     
+    // // ... after initializing your cryptoContext
+    // ofstream contextFile("cryptocontext.txt", ios::binary);
+    // if (!contextFile.is_open()) {
+    //     cerr << "Error: Could not open file to write crypto context." << endl;
+    //     return 1;
+    // }
+    // Serial::Serialize(cryptoContext, contextFile, SerType::BINARY);
+    // contextFile.close();
+
+        // Save the crypto context to file
+    cout << "Serializing crypto context to file..." << endl;
+    if (!Serial::SerializeToFile("cryptocontext.txt", cryptoContext, SerType::BINARY)) {
+        cerr << "Error: Failed to serialize crypto context to file." << endl;
+        return 1;
+    }
+    cout << "Crypto context successfully saved to cryptocontext.txt" << endl;
+
     // Generate key pair.
     KeyPair<DCRTPoly> keyPair = cryptoContext->KeyGen();
     if (!keyPair.good()) {

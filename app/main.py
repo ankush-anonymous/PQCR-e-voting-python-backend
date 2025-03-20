@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import subprocess
 import base64
 import json
+from typing import List
 
 # Importing PQC Signature wrapper
 from app.oqs_wrapper import Signature  # Ensure correct import
@@ -55,6 +56,11 @@ class StoreMappingRequest(BaseModel):
     election_id: str
     mapping: dict
 
+class Vote(BaseModel):
+    encrypted_vote: str
+
+class SaveEncrytVoteRequest(BaseModel):
+    votes: List[Vote]
 
 
 
@@ -376,19 +382,89 @@ async def verify_vote_proof_endpoint(req: VerifyVoteProofRequest):
         raise HTTPException(status_code=500, detail=str(e))
     
 @app.post("/receive-votes")
-async def receive_votes_from_node_server():
+async def receive_votes_from_node_server(req: SaveEncrytVoteRequest):
+    """
+    Receives votes in JSON format and saves them to a file.
+
+    The request is validated using the SaveEncrytVoteRequest model.
+    Votes are saved into a JSON file under the "tally_votes" folder.
+
+    Returns:
+        A JSON response with a success message and the file path.
+
+    Raises:
+        HTTPException: If any error occurs during file writing.
+    """
     try:
-          # Parse the incoming JSON data.
-        data = request.get_json()
-        votes = data.get("votes", [])
+        # Log for debugging purposes
+        # print("Function called with votes:", req.votes)
+
+        # Create the folder if it doesn't exist (using underscore to avoid spaces)
+        folder_name = "tally_votes"
+        os.makedirs(folder_name, exist_ok=True)
         
-        # Save the votes to a file.
-        with open("encrypted_votes.json", "w") as f:
-            json.dump(votes, f, indent=4)
+        # Define the file path (you could incorporate an election id if needed)
+        file_path = os.path.join(folder_name, "encrypted_votes.json")
         
-        return {"message": "Votes received and saved","success":true}
+        # Convert list of Vote objects to list of dictionaries
+        votes_data = [vote.dict() for vote in req.votes]
+        
+        # Write the votes to the JSON file with indentation for readability
+        with open(file_path, "w") as json_file:
+            json.dump({"votes": votes_data}, json_file, indent=4)
+        
+        print("Votes saved to:", file_path)
+        return {"message": "Votes saved successfully", "file_path": file_path}
+    except Exception as e:
+        print("Error encountered:", str(e))
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/aggregate-votes")
+async def aggregate_votes():
+    """
+    Aggregates votes by sending the file path to the C++ aggregator executable.
+    
+    The process is as follows:
+      1. Construct the file path from the provided election_id.
+      2. Check if the file exists.
+      3. Call the C++ executable "./vote_aggregator" with the file path as an argument.
+      4. Capture and return the final aggregated cipher text.
+    
+    Returns:
+        A JSON object with the aggregated cipher text.
+    
+    Raises:
+        HTTPException: If the file does not exist or if the C++ aggregator fails.
+    """
+    try:
+        # Construct the file path where votes are stored
+        folder_name = "tally_votes"
+        file_path = os.path.join(folder_name, f"encrypted_votes.json")
+        
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"Encrypted Votes File not found ")
+        
+        # Call the C++ aggregator executable with the file path argument
+        result = subprocess.run(
+            ["./vote_aggregator", file_path],
+            capture_output=True,
+            text=True
+        )
+        
+        # Check if the C++ process executed successfully
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Aggregator failed: {result.stderr}")
+        
+        # Strip any extra whitespace/newlines from the output
+        aggregated_cipher_text = result.stdout.strip()
+        
+        return {
+            "message": "Aggregation successful",
+            "aggregated_cipher_text": aggregated_cipher_text
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 # 🚀 FastAPI entry point
 if __name__ == "__main__":
