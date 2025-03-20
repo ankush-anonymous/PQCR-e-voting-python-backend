@@ -55,13 +55,26 @@ int main() {
     // Serial::Serialize(cryptoContext, contextFile, SerType::BINARY);
     // contextFile.close();
 
-        // Save the crypto context to file
+    // Save the crypto context to file
     cout << "Serializing crypto context to file..." << endl;
-    if (!Serial::SerializeToFile("cryptocontext.txt", cryptoContext, SerType::BINARY)) {
-        cerr << "Error: Failed to serialize crypto context to file." << endl;
+    try {
+        if (!Serial::SerializeToFile("cryptocontext.txt", cryptoContext, SerType::BINARY)) {
+            cerr << "Error: Failed to serialize crypto context to file." << endl;
+            return 1;
+        }
+        cout << "Crypto context successfully saved to cryptocontext.txt" << endl;
+        
+        // Verify by trying to load it back
+        CryptoContext<DCRTPoly> loadedContext;
+        if (!Serial::DeserializeFromFile("cryptocontext.txt", loadedContext, SerType::BINARY)) {
+            cerr << "Error: Failed to deserialize the crypto context we just saved." << endl;
+            return 1;
+        }
+        cout << "Successfully verified the serialized context can be loaded back." << endl;
+    } catch (const exception& e) {
+        cerr << "Exception during serialization: " << e.what() << endl;
         return 1;
     }
-    cout << "Crypto context successfully saved to cryptocontext.txt" << endl;
 
     // Generate key pair.
     KeyPair<DCRTPoly> keyPair = cryptoContext->KeyGen();
