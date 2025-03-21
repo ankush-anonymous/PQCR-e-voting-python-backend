@@ -108,16 +108,16 @@ RUN gcc -O2 -D__LINUX__ -D__X64__ -Wno-error=stringop-overflow \
 # ============================
 # 📌 Compile C++ Aggregator Binary (New Code)
 # ============================
-# RUN g++ -o /app/vote_aggregator /app/aggregator.cpp \
-#     -I/app/openfhe-development/src/core/include \
-#     -I/app/openfhe-development/src/pke/include \
-#     -I/app/openfhe-development/src/binfhe/include \
-#     -I/app/openfhe-development/build/src/core \
-#     -I/app/openfhe-development/third-party/cereal/include \
-#     -I/app/openfhe-development/src/core/include/serialization \
-#     -I/app/openfhe-development/src/pke/include/serialization \
-#     -L/app/openfhe-development/build/lib \
-#     -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
+RUN g++ -o /app/vote_aggregator /app/aggregator.cpp \
+    -I/app/openfhe-development/src/core/include \
+    -I/app/openfhe-development/src/pke/include \
+    -I/app/openfhe-development/src/binfhe/include \
+    -I/app/openfhe-development/build/src/core \
+    -I/app/openfhe-development/third-party/cereal/include \
+    -I/app/openfhe-development/src/core/include/serialization \
+    -I/app/openfhe-development/src/pke/include/serialization \
+    -L/app/openfhe-development/build/lib \
+    -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
     
 # Expose the FastAPI port
 EXPOSE 8000
