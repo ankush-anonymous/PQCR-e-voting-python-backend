@@ -46,36 +46,6 @@ int main() {
     cryptoContext->Enable(KEYSWITCH);
     cryptoContext->Enable(LEVELEDSHE);
     
-    // // ... after initializing your cryptoContext
-    // ofstream contextFile("cryptocontext.txt", ios::binary);
-    // if (!contextFile.is_open()) {
-    //     cerr << "Error: Could not open file to write crypto context." << endl;
-    //     return 1;
-    // }
-    // Serial::Serialize(cryptoContext, contextFile, SerType::BINARY);
-    // contextFile.close();
-
-    // Save the crypto context to file
-    cout << "Serializing crypto context to file..." << endl;
-    try {
-        if (!Serial::SerializeToFile("cryptocontext.txt", cryptoContext, SerType::BINARY)) {
-            cerr << "Error: Failed to serialize crypto context to file." << endl;
-            return 1;
-        }
-        cout << "Crypto context successfully saved to cryptocontext.txt" << endl;
-        
-        // Verify by trying to load it back
-        CryptoContext<DCRTPoly> loadedContext;
-        if (!Serial::DeserializeFromFile("cryptocontext.txt", loadedContext, SerType::BINARY)) {
-            cerr << "Error: Failed to deserialize the crypto context we just saved." << endl;
-            return 1;
-        }
-        cout << "Successfully verified the serialized context can be loaded back." << endl;
-    } catch (const exception& e) {
-        cerr << "Exception during serialization: " << e.what() << endl;
-        return 1;
-    }
-
     // Generate key pair.
     KeyPair<DCRTPoly> keyPair = cryptoContext->KeyGen();
     if (!keyPair.good()) {
@@ -84,18 +54,62 @@ int main() {
     }
     cout << "Keys generated successfully." << endl;
     
-    // Serialize public key.
+    // Open a file to write both the crypto context and the public key.
+    ofstream outFile("context_and_pubkey.txt", ios::binary);
+    if (!outFile.is_open()) {
+        cerr << "Error: Could not open file to write context and public key." << endl;
+        return 1;
+    }
+    
+    try {
+        // Serialize the crypto context first.
+        Serial::Serialize(cryptoContext, outFile, SerType::BINARY);
+        // Then serialize the public key.
+        Serial::Serialize(keyPair.publicKey, outFile, SerType::BINARY);
+    } catch (const exception &e) {
+        cerr << "Error during serialization: " << e.what() << endl;
+        return 1;
+    }
+    outFile.close();
+    cout << "Crypto context and public key successfully saved to context_and_pubkey.txt" << endl;
+    
+    // Optional verification: deserialize them back from the same file.
+    ifstream inFile("context_and_pubkey.txt", ios::binary);
+    if (!inFile.is_open()) {
+        cerr << "Error: Could not open context_and_pubkey.txt for reading." << endl;
+        return 1;
+    }
+    CryptoContext<DCRTPoly> loadedContext;
+    try {
+        Serial::Deserialize(loadedContext, inFile, SerType::BINARY);
+    } catch (const exception &e) {
+        cerr << "Error: Failed to deserialize crypto context from context_and_pubkey.txt: " << e.what() << endl;
+        return 1;
+    }
+    // Deserialize the public key from the same stream.
+    PublicKey<DCRTPoly> loadedPublicKey;
+    try {
+        Serial::Deserialize(loadedPublicKey, inFile, SerType::BINARY);
+    } catch (const exception &e) {
+        cerr << "Error: Failed to deserialize public key from context_and_pubkey.txt: " << e.what() << endl;
+        return 1;
+    }
+    inFile.close();
+    cout << "Successfully verified the serialized context and public key can be loaded back." << endl;
+    
+    // Serialize public key separately for output (Base64-encoded).
     stringstream publicStream;
     Serial::Serialize(keyPair.publicKey, publicStream, SerType::BINARY);
     string publicStr = publicStream.str();
     string publicKeyBase64 = base64Encode(publicStr);
     
-    // Serialize private key.
+    // Serialize private key separately.
     stringstream privateStream;
     Serial::Serialize(keyPair.secretKey, privateStream, SerType::BINARY);
     string privateStr = privateStream.str();
     string privateKeyBase64 = base64Encode(privateStr);
     
+    // Return (print) the public and private keys.
     cout << "Public Key (Base64):" << endl;
     cout << publicKeyBase64 << endl << endl;
     

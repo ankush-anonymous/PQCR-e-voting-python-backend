@@ -123,7 +123,8 @@ int main(int argc, char* argv[]) {
         string decodedVote = base64Decode(encVote);
         istringstream iss(decodedVote);
         try {
-            Serial::Deserialize(currVote, iss, SerType::BINARY);
+            // Use the crypto context to deserialize the ciphertext so that it is bound to cc.
+            currVote = cc->DeserializeCiphertext(iss, SerType::BINARY);
         } catch (const exception& e) {
             cerr << "Error deserializing a vote: " << e.what() << endl;
             return 1;
