@@ -168,7 +168,7 @@ async def get_openfhe_keys(req: OpenFheKeygenRequest):
     try:
         # Call the key-generation binary.
         result = subprocess.run(
-            ["/app/encrypt_vote_keygen"],
+            ["/app/encrypt_vote_keygen",req.election_id],
             capture_output=True,
             text=True
         )
@@ -201,7 +201,7 @@ async def get_openfhe_keys(req: OpenFheKeygenRequest):
         raise HTTPException(status_code=500, detail=str(e))
     
 
-@app.post("/encrypt-vote")
+@app.post("/encrypt-vote") 
 async def encrypt_vote(req: EncryptVoteRequest):
     """
     Encrypts a vote using one-hot encoding based on the candidate ID.
@@ -240,7 +240,7 @@ async def encrypt_vote(req: EncryptVoteRequest):
         # Step 4: Convert vector to string and call encryption binary
         vector_str = " ".join(map(str, one_hot_vector))
         result = subprocess.run(
-            ["/app/encrypt_vote", vector_str, public_key_path],
+            ["/app/encrypt_vote", vector_str, req.election_id],
             capture_output=True,
             text=True
         )
