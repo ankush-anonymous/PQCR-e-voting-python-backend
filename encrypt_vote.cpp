@@ -56,6 +56,18 @@ void encryptVector(const std::string& electionId, const std::vector<int64_t>& on
     }
 }
 
+// Define the unified key material structure at global scope.
+struct KeyMaterial {
+    CryptoContext<DCRTPoly> cryptoContext;
+    PublicKey<DCRTPoly> publicKey;
+    PrivateKey<DCRTPoly> secretKey; // For completeness
+
+    template <class Archive>
+    void serialize(Archive & ar) {
+        ar(cryptoContext, publicKey, secretKey);
+    }
+};
+
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         std::cerr << "Usage: " << argv[0] << " <election_id> <one_hot_vector_values...>" << std::endl;

@@ -1,4 +1,5 @@
 #include <openfhe.h>
+#include <openfhe.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -10,6 +11,7 @@
 #include "scheme/bfvrns/bfvrns-ser.h"
 
 using namespace lbcrypto;
+using namespace std;
 using namespace std;
 namespace fs = std::filesystem;
 
