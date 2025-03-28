@@ -69,7 +69,7 @@ int main(int argc, char* argv[]) {
     }
     string votesFile = argv[1];
     string outputFile = votesFile.substr(0, votesFile.find_last_of('.')) + "_aggregated_result.json";
-    
+
     // Read votes from JSON file.
     cout << "Reading votes from " << votesFile << endl;
     ifstream votesStream(votesFile);
@@ -77,7 +77,7 @@ int main(int argc, char* argv[]) {
         cerr << "Error: Could not open votes file." << endl;
         return 1;
     }
-    
+
     json votesJson;
     try {
         votesStream >> votesJson;
@@ -86,7 +86,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     votesStream.close();
-    
+
     // Deserialize crypto context.
     cout << "Deserializing crypto context..." << endl;
     CryptoContext<DCRTPoly> cc;
@@ -94,7 +94,7 @@ int main(int argc, char* argv[]) {
         cerr << "Error: Could not load crypto context." << endl;
         return 1;
     }
-    
+
     // Extract encrypted votes from JSON.
     vector<string> encryptedVotes;
     try {
@@ -105,18 +105,18 @@ int main(int argc, char* argv[]) {
         cerr << "Error extracting votes: " << e.what() << endl;
         return 1;
     }
-    
+
     cout << "Processing " << encryptedVotes.size() << " votes..." << endl;
-    
-    if (encryptedVotes.empty()) {    
+
+    if (encryptedVotes.empty()) {
         cerr << "Error: No votes found." << endl;
         return 1;
     }
-    
+
     // Aggregate votes using homomorphic addition.
     Ciphertext<DCRTPoly> aggregatedVote;
     bool firstVote = true;
-    
+
     for (const auto& encVote : encryptedVotes) {
         Ciphertext<DCRTPoly> currVote;
         // Decode the Base64-encoded vote back into binary.
@@ -128,7 +128,7 @@ int main(int argc, char* argv[]) {
             cerr << "Error deserializing a vote: " << e.what() << endl;
             return 1;
         }
-        
+
         if (firstVote) {
             aggregatedVote = currVote;
             firstVote = false;
@@ -141,7 +141,7 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    
+
     // Serialize the final aggregated ciphertext.
     ostringstream oss;
     try {
@@ -151,25 +151,25 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     string serializedResult = oss.str();
-    
+
     // Base64 encode the aggregated ciphertext so it is valid UTF-8 for JSON.
     string aggregatedCiphertextBase64 = base64Encode(serializedResult);
-    
+
     // Output results to file.
     ofstream outFile(outputFile);
     if (!outFile.is_open()) {
         cerr << "Error: Could not open output file." << endl;
         return 1;
     }
-    
+
     json resultJson;
     resultJson["total_votes"] = encryptedVotes.size();
     resultJson["aggregated_encrypted_vote"] = aggregatedCiphertextBase64;
-    
+
     outFile << resultJson.dump(4); // Pretty print with 4-space indent.
     outFile.close();
-    
+
     cout << "Vote aggregation complete. Encrypted result saved to " << outputFile << endl;
-    
+
     return 0;
 }

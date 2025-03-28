@@ -1,98 +1,83 @@
+#include <openfhe.h>
+#include <filesystem>
 #include <iostream>
-#include <sstream>
-#include <fstream>
-#include <string>
+#include <stdexcept>
 #include <vector>
-#include "openfhe.h"
+#include <string>
 
-using namespace std;
+#include "ciphertext-ser.h"
+#include "cryptocontext-ser.h"
+#include "key/key-ser.h"
+#include "scheme/bfvrns/bfvrns-ser.h"
+
 using namespace lbcrypto;
 
-string base64Encode(const string &in) {
-    static const string base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    string out;
-    int val = 0, valb = -6;
-    for (unsigned char c : in) {
-        val = (val << 8) + c;
-        valb += 8;
-        while (valb >= 0) {
-            out.push_back(base64_chars[(val >> valb) & 0x3F]);
-            valb -= 6;
+void encryptVector(const std::string& electionId, const std::vector<int64_t>& oneHotVector) {
+    try {
+        // Construct file paths
+        std::string folder = electionId + "_credentials/";
+        std::string contextFile = folder + "cryptocontext.bin";
+        std::string publicKeyFile = folder + "public_key.bin";
+        std::string outputFilePath = folder + "encrypted_vector.bin";
+
+        // Deserialize crypto context
+        CryptoContext<DCRTPoly> cc;
+        if (!Serial::DeserializeFromFile(contextFile, cc, SerType::BINARY)) {
+            throw std::runtime_error("Failed to deserialize crypto context from " + contextFile);
         }
+
+        // Enable necessary features (must match keygen)
+        cc->Enable(PKE);
+        cc->Enable(KEYSWITCH);
+        cc->Enable(LEVELEDSHE);
+
+        // Deserialize public key
+        PublicKey<DCRTPoly> publicKey;
+        if (!Serial::DeserializeFromFile(publicKeyFile, publicKey, SerType::BINARY)) {
+            throw std::runtime_error("Failed to deserialize public key from " + publicKeyFile);
+        }
+
+        // Encrypt the one-hot vector
+        Plaintext plaintext = cc->MakeCoefPackedPlaintext(oneHotVector);
+        Ciphertext<DCRTPoly> ciphertext = cc->Encrypt(publicKey, plaintext);
+        if (!ciphertext) {
+            throw std::runtime_error("Failed to encrypt the vector");
+        }
+
+        // Serialize and save the ciphertext
+        if (!Serial::SerializeToFile(outputFilePath, ciphertext, SerType::BINARY)) {
+            throw std::runtime_error("Failed to serialize ciphertext to " + outputFilePath);
+        }
+        std::cout << "Vector encrypted and saved to " << outputFilePath << std::endl;
+
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        throw;
     }
-    if (valb > -6) out.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
-    while (out.size() % 4) out.push_back('=');
-    return out;
 }
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        cout << "Usage: " << argv[0] << " \"<one-hot-vector>\" <election_id>" << endl;
+        std::cerr << "Usage: " << argv[0] << " <election_id> <one_hot_vector_values...>" << std::endl;
+        std::cerr << "Example: " << argv[0] << " ankush123 0 1 1" << std::endl;
         return 1;
     }
 
-    string oneHotVectorStr = argv[1];
-    string election_id = argv[2];
-    string baseDir = "election_credentials/";
-    string contextPath = baseDir + election_id + "_cryptocontext.cc";
-    string publicKeyPath = baseDir + election_id + "_public_key.pk";
-
-    cout << "Election ID: " << election_id << endl;
-    cout << "Crypto Context File: " << contextPath << endl;
-    cout << "Public Key File: " << publicKeyPath << endl;
-
-    // Parse one-hot vector
-    vector<int64_t> voteVector;
-    stringstream ss(oneHotVectorStr);
-    int64_t value;
-    while (ss >> value) voteVector.push_back(value);
-    if (voteVector.empty()) {
-        cerr << "Error: Invalid one-hot vector input" << endl;
-        return 1;
-    }
-    cout << "One-hot vector parsed successfully: ";
-    for (auto v : voteVector) cout << v << " ";
-    cout << endl;
-
-    // Load crypto context
-    CryptoContext<DCRTPoly> cryptoContext;
-    if (!Serial::DeserializeFromFile(contextPath, cryptoContext, SerType::BINARY)) {
-        cerr << "Error: Failed to deserialize crypto context from file " << contextPath << endl;
-        return 1;
-    }
-    cout << "Crypto context loaded successfully!" << endl;
-
-    // Load public key
-    PublicKey<DCRTPoly> publicKey;
-    if (!Serial::DeserializeFromFile(publicKeyPath, publicKey, SerType::BINARY)) {
-        cerr << "Error: Failed to deserialize public key from file " << publicKeyPath << endl;
-        return 1;
-    }
-    cout << "Public key deserialized successfully!" << endl;
-
-    // Create plaintext
-    Plaintext plaintext = cryptoContext->MakePackedPlaintext(voteVector);
-
-    // Encrypt using the loaded context and public key
-    auto ciphertext = cryptoContext->Encrypt(publicKey, plaintext);
-
-    // Serialize and encode
-    stringstream os;
-    Serial::Serialize(ciphertext, os, SerType::BINARY);
-    if (os.str().empty()) {
-        cerr << "Error: Failed to serialize ciphertext" << endl;
-        return 1;
+    std::string electionId = argv[1];
+    std::vector<int64_t> oneHotVector;
+    for (int i = 2; i < argc; ++i) {
+        try {
+            oneHotVector.push_back(std::stoll(argv[i]));
+        } catch (const std::exception& e) {
+            std::cerr << "Invalid vector value: " << argv[i] << std::endl;
+            return 1;
+        }
     }
 
-    string encryptedVoteBase64 = base64Encode(os.str());
-    if (encryptedVoteBase64.empty()) {
-        cerr << "Error: Base64 encryption result is empty" << endl;
+    try {
+        encryptVector(electionId, oneHotVector);
+    } catch (const std::exception& e) {
         return 1;
     }
-
-    cout << "=== ENCRYPTED VOTE DATA ===" << endl;
-    cout << encryptedVoteBase64 << endl;
-    cout << "===========================" << endl;
-
     return 0;
 }
