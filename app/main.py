@@ -154,9 +154,9 @@ async def get_openfhe_keys(req: OpenFheKeygenRequest):
     Generates OpenFHE keys by calling the key-generation binary.
     
     Steps:
-      1. Call /app/encrypt_vote_keygen with the election ID to generate keys.
-      2. Parse and return the public and private OpenFHE keys.
-      3. The C++ program will create a temporary file named with the election id in the 'elections' folder,
+      1. Call the key-generation binary (/app/encrypt_vote_keygen) to generate keys.
+      2. Parse and return the Base64-encoded public and private OpenFHE keys.
+      3. Create a temporary file (in the 'elections' folder) named using the election id,
          saving only the public key.
     
     Returns:
@@ -166,17 +166,14 @@ async def get_openfhe_keys(req: OpenFheKeygenRequest):
       HTTPException if key generation, file creation, or parsing fails.
     """
     try:
-        # Call the key-generation binary with election_id as a command-line argument
+        # Call the key-generation binary.
         result = subprocess.run(
-            ["/app/encrypt_vote_keygen",req.election_id],
+            ["/app/encrypt_vote_keygen", req.election_id],
             capture_output=True,
             text=True
         )
         if result.returncode != 0:
-            raise HTTPException(
-                status_code=500, 
-                detail=f"Key generation failed: {result.stderr}"
-            )
+            raise HTTPException(status_code=500, detail="Key generation failed")
         
         # Parse the output for keys.
         public_key, private_key = parse_keygen_output(result.stdout)
@@ -186,7 +183,15 @@ async def get_openfhe_keys(req: OpenFheKeygenRequest):
                 detail="Failed to extract keys from key generation output"
             )
         
-        # The C++ program now handles creating the elections folder and saving the public key file
+        # Create the elections folder if it doesn't exist.
+        elections_folder = "elections"
+        os.makedirs(elections_folder, exist_ok=True)
+        
+        # Create a temporary file using the election id as the filename,
+        # and save only the public key.
+        temp_file_path = os.path.join(elections_folder, f"{req.election_id}.tmp")
+        with open(temp_file_path, "w") as temp_file:
+            temp_file.write(f"openfhe_public_key: {public_key}\n")
         
         return {
             "openfhe_public_key": public_key,
