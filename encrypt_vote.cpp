@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <vector>
 #include <string>
+#include <sstream>
+#include <algorithm>
 
 #include "ciphertext-ser.h"
 #include "cryptocontext-ser.h"
@@ -11,84 +13,122 @@
 #include "scheme/bfvrns/bfvrns-ser.h"
 
 using namespace lbcrypto;
+using namespace std;
+namespace fs = std::filesystem;
 
-void encryptVector(const std::string& electionId, const std::vector<int64_t>& oneHotVector) {
+// Helper: trim whitespace from both ends.
+string trim(const string &s) {
+    auto start = s.begin();
+    while (start != s.end() && isspace(*start)) { start++; }
+    auto end = s.end();
+    do { end--; } while (distance(start, end) > 0 && isspace(*end));
+    return string(start, end + 1);
+}
+
+// Parse a one-hot vector from a string. Accepts "[0,1,1]" or "0,1,1".
+vector<int64_t> parseVector(const string& vectorStr) {
+    string s = vectorStr;
+    // Remove surrounding brackets if present.
+    if (!s.empty() && s.front() == '[' && s.back() == ']') {
+        s = s.substr(1, s.size() - 2);
+    }
+    vector<int64_t> result;
+    stringstream ss(s);
+    string token;
+    while (getline(ss, token, ',')) {
+        token = trim(token);
+        if (!token.empty()) {
+            try {
+                result.push_back(stoll(token));
+            } catch (const std::exception& e) {
+                throw runtime_error("Invalid vector element: " + token);
+            }
+        }
+    }
+    return result;
+}
+
+void encryptVector(const string& electionId, const vector<int64_t>& oneHotVector) {
     try {
-        // Construct file paths
-        std::string folder = electionId + "_credentials/";
-        std::string contextFile = folder + "cryptocontext.bin";
-        std::string publicKeyFile = folder + "public_key.bin";
-        std::string outputFilePath = folder + "encrypted_vector.bin";
+        // Construct file paths based on the election ID.
+        string folder = electionId + "_credentials/";
+        string contextFile = folder + "cryptocontext.bin";
+        string publicKeyFile = folder + "public_key.bin";
+        string outputFilePath = folder + "encrypted_vector.bin";
 
-        // Deserialize crypto context
-        CryptoContext<DCRTPoly> cc;
-        if (!Serial::DeserializeFromFile(contextFile, cc, SerType::BINARY)) {
-            throw std::runtime_error("Failed to deserialize crypto context from " + contextFile);
+        // Check that the necessary files exist.
+        if (!fs::exists(contextFile)) {
+            throw runtime_error("Context file not found: " + contextFile);
+        }
+        if (!fs::exists(publicKeyFile)) {
+            throw runtime_error("Public key file not found: " + publicKeyFile);
         }
 
-        // Enable necessary features (must match keygen)
+        // Deserialize crypto context.
+        CryptoContext<DCRTPoly> cc;
+        if (!Serial::DeserializeFromFile(contextFile, cc, SerType::BINARY)) {
+            throw runtime_error("Failed to deserialize crypto context from " + contextFile);
+        }
         cc->Enable(PKE);
         cc->Enable(KEYSWITCH);
         cc->Enable(LEVELEDSHE);
 
-        // Deserialize public key
+        // Deserialize public key.
         PublicKey<DCRTPoly> publicKey;
         if (!Serial::DeserializeFromFile(publicKeyFile, publicKey, SerType::BINARY)) {
-            throw std::runtime_error("Failed to deserialize public key from " + publicKeyFile);
+            throw runtime_error("Failed to deserialize public key from " + publicKeyFile);
         }
 
-        // Encrypt the one-hot vector
+        // Encrypt the one-hot vector.
         Plaintext plaintext = cc->MakeCoefPackedPlaintext(oneHotVector);
         Ciphertext<DCRTPoly> ciphertext = cc->Encrypt(publicKey, plaintext);
         if (!ciphertext) {
-            throw std::runtime_error("Failed to encrypt the vector");
+            throw runtime_error("Failed to encrypt the vector");
         }
 
-        // Serialize and save the ciphertext
+        // Serialize and save the ciphertext.
         if (!Serial::SerializeToFile(outputFilePath, ciphertext, SerType::BINARY)) {
-            throw std::runtime_error("Failed to serialize ciphertext to " + outputFilePath);
+            throw runtime_error("Failed to serialize ciphertext to " + outputFilePath);
         }
-        std::cout << "Vector encrypted and saved to " << outputFilePath << std::endl;
-
-    } catch (const std::exception& e) {
-        std::cerr << "Error: " << e.what() << std::endl;
+        cout << "=== ENCRYPTED VOTE DATA ===" << endl;
+        // For demonstration, print the output file path.
+        cout << "Vector encrypted and saved to " << outputFilePath << endl;
+        // (Optionally, you can serialize the ciphertext to string and print it.)
+    } catch (const exception& e) {
+        cerr << "Error: " << e.what() << endl;
         throw;
     }
 }
 
-// Define the unified key material structure at global scope.
-struct KeyMaterial {
-    CryptoContext<DCRTPoly> cryptoContext;
-    PublicKey<DCRTPoly> publicKey;
-    PrivateKey<DCRTPoly> secretKey; // For completeness
-
-    template <class Archive>
-    void serialize(Archive & ar) {
-        ar(cryptoContext, publicKey, secretKey);
-    }
-};
-
 int main(int argc, char* argv[]) {
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <election_id> <one_hot_vector_values...>" << std::endl;
-        std::cerr << "Example: " << argv[0] << " ankush123 0 1 1" << std::endl;
+    // Expected usage: ./encrypt_vote <election_id> <one_hot_vector>
+    // Example: ./encrypt_vote "mumbai-election-cb08603e" "[0,1,1]"
+    if (argc != 3) {
+        cerr << "Usage: " << argv[0] << " <election_id> <one_hot_vector>" << endl;
+        cerr << "Example: " << argv[0] << " \"mumbai-election-cb08603e\" \"[0,1,1]\"" << endl;
         return 1;
     }
 
-    std::string electionId = argv[1];
-    std::vector<int64_t> oneHotVector;
-    for (int i = 2; i < argc; ++i) {
-        try {
-            oneHotVector.push_back(std::stoll(argv[i]));
-        } catch (const std::exception& e) {
-            std::cerr << "Invalid vector value: " << argv[i] << std::endl;
-            return 1;
-        }
+    string electionId = argv[1];
+    string vectorStr = argv[2];
+    vector<int64_t> oneHotVector;
+    try {
+        oneHotVector = parseVector(vectorStr);
+    } catch (const exception& e) {
+        cerr << "Error parsing vector: " << e.what() << endl;
+        return 1;
     }
+
+    cout << "Election ID: " << electionId << endl;
+    cout << "One-hot vector parsed successfully: ";
+    for (auto v : oneHotVector) {
+        cout << v << " ";
+    }
+    cout << endl;
 
     try {
         encryptVector(electionId, oneHotVector);
-    } catch (const std::exception& e) {
+    } catch (const exception& e) {
         return 1;
     }
     return 0;

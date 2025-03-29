@@ -201,7 +201,7 @@ async def get_openfhe_keys(req: OpenFheKeygenRequest):
         raise HTTPException(status_code=500, detail=str(e))
     
 
-@app.post("/encrypt-vote") 
+@app.post("/encrypt-vote")
 async def encrypt_vote(req: EncryptVoteRequest):
     """
     Encrypts a vote using one-hot encoding based on the candidate ID.
@@ -211,7 +211,7 @@ async def encrypt_vote(req: EncryptVoteRequest):
         voter_id = req.voter_id
         candidate_id = req.candidate_id
 
-        # Step 1: Load candidate mapping from JSON file
+        # Step 1: Load candidate mapping from JSON file.
         mapping_file_path = os.path.join(MAPPING_DIR, f"{election_id}.json")
         if not os.path.exists(mapping_file_path):
             raise HTTPException(status_code=500, detail="Candidate mapping file not found")
@@ -219,7 +219,7 @@ async def encrypt_vote(req: EncryptVoteRequest):
         with open(mapping_file_path, "r") as file:
             candidate_mapping = json.load(file)
 
-        # Step 2: Create a one-hot encoded vector
+        # Step 2: Create a one-hot encoded vector.
         num_candidates = len(candidate_mapping)
         one_hot_vector = [0] * num_candidates
 
@@ -231,31 +231,36 @@ async def encrypt_vote(req: EncryptVoteRequest):
 
         print(f"✅ One-hot vector for candidate '{candidate_id}': {one_hot_vector}")
 
-        # Step 3: Define the public key path correctly
-        elections_folder = "elections"
-        public_key_path = os.path.join(elections_folder, f"{election_id}_public_key.tmp")
+        # Step 3: Define the public key path correctly.
+        # (In this design, we assume that the key generation binary already created a folder 
+        # named <election_id>_credentials with keys inside.)
+        elections_folder = election_id + "_credentials"
+        public_key_path = os.path.join(elections_folder, "public_key.bin")
         if not os.path.exists(public_key_path):
-            raise HTTPException(status_code=500, detail="Election file not found")
+            raise HTTPException(status_code=500, detail="Public key file not found")
 
-        # Step 4: Convert vector to string and call encryption binary
-        vector_str = " ".join(map(str, one_hot_vector))
+        # Step 4: Convert vector to a string in the format "[0,1,1]" and call encryption binary.
+        # (We use JSON-style formatting so the C++ binary can parse it.)
+        vector_str = json.dumps(one_hot_vector)
+        print(f"Sending to C++: election_id = {election_id}, vector = {vector_str}")
+
         result = subprocess.run(
-            ["/app/encrypt_vote", vector_str, req.election_id],
+            ["/app/encrypt_vote", election_id, vector_str],
             capture_output=True,
             text=True
         )
 
         print(f"Command return code: {result.returncode}")
-        print(f"Command stdout: {result.stdout}")
-        print(f"Command stderr: {result.stderr}")
+        print(f"Command stdout:\n{result.stdout}")
+        print(f"Command stderr:\n{result.stderr}")
 
         if result.returncode != 0:
             raise HTTPException(
-                status_code=500, 
+                status_code=500,
                 detail=f"Encryption failed: {result.stderr}"
             )
 
-        # Step 5: Extract the encrypted vote from C++ output
+        # Step 5: Extract the encrypted vote from C++ output.
         output_lines = result.stdout.strip().split("\n")
         encrypted_vote = None
         for i, line in enumerate(output_lines):
@@ -266,12 +271,11 @@ async def encrypt_vote(req: EncryptVoteRequest):
         if not encrypted_vote:
             raise HTTPException(status_code=500, detail="Failed to extract encrypted vote")
 
-        # Step 6: Save the encrypted vote to a file
+        # Step 6: Save the encrypted vote to a file.
         file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{voter_id}.txt")
         with open(file_path, "w") as file:
             file.write(encrypted_vote)
 
-        # Return the response
         return {
             "message": "Vote encrypted successfully using one-hot encoding.",
             "one_hot_vector": one_hot_vector,
@@ -282,7 +286,6 @@ async def encrypt_vote(req: EncryptVoteRequest):
     except Exception as e:
         print(f"Error in encrypt_vote: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.post("/store-candidate-mapping")
 async def store_mapping(request: StoreMappingRequest):
