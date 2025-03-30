@@ -245,7 +245,7 @@ async def encrypt_vote(req: EncryptVoteRequest):
         print(f"Sending to C++: election_id = {election_id}, vector = {vector_str}")
 
         result = subprocess.run(
-            ["/app/encrypt_vote", election_id, vector_str],
+            ["/app/encrypt_vote", election_id,voter_id, vector_str],
             capture_output=True,
             text=True
         )
@@ -271,21 +271,23 @@ async def encrypt_vote(req: EncryptVoteRequest):
         if not encrypted_vote:
             raise HTTPException(status_code=500, detail="Failed to extract encrypted vote")
 
-        # Step 6: Save the encrypted vote to a file.
-        file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{voter_id}.txt")
-        with open(file_path, "w") as file:
-            file.write(encrypted_vote)
+        # # Step 6: Save the encrypted vote to a file.
+        # file_path = os.path.join(ENCRYPTED_VOTES_DIR, f"{voter_id}.txt")
+        # with open(file_path, "w") as file:
+        #     file.write(encrypted_vote)
 
         return {
             "message": "Vote encrypted successfully using one-hot encoding.",
             "one_hot_vector": one_hot_vector,
             "encrypted_vote": encrypted_vote,
-            "file_path": file_path
+            # "file_path": file_path
         }
 
     except Exception as e:
         print(f"Error in encrypt_vote: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+
 
 @app.post("/store-candidate-mapping")
 async def store_mapping(request: StoreMappingRequest):

@@ -48,13 +48,12 @@ vector<int64_t> parseVector(const string& vectorStr) {
     return result;
 }
 
-void encryptVector(const string& electionId, const vector<int64_t>& oneHotVector) {
+void encryptVector(const string& electionId, const string& voterId, const vector<int64_t>& oneHotVector) {
     try {
         // Construct file paths based on the election ID.
         string folder = electionId + "_credentials/";
         string contextFile = folder + "cryptocontext.bin";
         string publicKeyFile = folder + "public_key.bin";
-        string outputFilePath = folder + "encrypted_vector.bin";
 
         // Check that the necessary files exist.
         if (!fs::exists(contextFile)) {
@@ -86,14 +85,20 @@ void encryptVector(const string& electionId, const vector<int64_t>& oneHotVector
             throw runtime_error("Failed to encrypt the vector");
         }
 
+        // Ensure the output folder exists.
+        string outputFolder = "encrypted_votes/";
+        if (!fs::exists(outputFolder)) {
+            fs::create_directory(outputFolder);
+        }
+        // Construct output file path using voter_id.
+        string outputFilePath = outputFolder + voterId + "_encrypted_vote.bin";
+
         // Serialize and save the ciphertext.
         if (!Serial::SerializeToFile(outputFilePath, ciphertext, SerType::BINARY)) {
             throw runtime_error("Failed to serialize ciphertext to " + outputFilePath);
         }
         cout << "=== ENCRYPTED VOTE DATA ===" << endl;
-        // For demonstration, print the output file path.
         cout << "Vector encrypted and saved to " << outputFilePath << endl;
-        // (Optionally, you can serialize the ciphertext to string and print it.)
     } catch (const exception& e) {
         cerr << "Error: " << e.what() << endl;
         throw;
@@ -101,16 +106,20 @@ void encryptVector(const string& electionId, const vector<int64_t>& oneHotVector
 }
 
 int main(int argc, char* argv[]) {
-    // Expected usage: ./encrypt_vote <election_id> <one_hot_vector>
-    // Example: ./encrypt_vote "mumbai-election-cb08603e" "[0,1,1]"
-    if (argc != 3) {
-        cerr << "Usage: " << argv[0] << " <election_id> <one_hot_vector>" << endl;
-        cerr << "Example: " << argv[0] << " \"mumbai-election-cb08603e\" \"[0,1,1]\"" << endl;
+    // Expected usage:
+    //   ./encrypt_vote <election_id> <voter_id> <one_hot_vector>
+    // Example:
+    //   ./encrypt_vote "mumbai-election-cb08603e" "voter123" "[0,1,1]"
+    if (argc != 4) {
+        cerr << "Usage: " << argv[0] << " <election_id> <voter_id> <one_hot_vector>" << endl;
+        cerr << "Example: " << argv[0] << " \"mumbai-election-cb08603e\" \"voter123\" \"[0,1,1]\"" << endl;
         return 1;
     }
 
     string electionId = argv[1];
-    string vectorStr = argv[2];
+    string voterId = argv[2];
+    string vectorStr = argv[3];
+
     vector<int64_t> oneHotVector;
     try {
         oneHotVector = parseVector(vectorStr);
@@ -120,6 +129,7 @@ int main(int argc, char* argv[]) {
     }
 
     cout << "Election ID: " << electionId << endl;
+    cout << "Voter ID: " << voterId << endl;
     cout << "One-hot vector parsed successfully: ";
     for (auto v : oneHotVector) {
         cout << v << " ";
@@ -127,7 +137,7 @@ int main(int argc, char* argv[]) {
     cout << endl;
 
     try {
-        encryptVector(electionId, oneHotVector);
+        encryptVector(electionId, voterId, oneHotVector);
     } catch (const exception& e) {
         return 1;
     }
