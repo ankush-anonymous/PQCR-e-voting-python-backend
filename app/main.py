@@ -428,47 +428,67 @@ async def receive_votes_from_node_server(req: SaveEncrytVoteRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/aggregate-votes")
+
 async def aggregate_votes(req: AggregateVotesRequest):
     """
-    Aggregates votes by calling the C++ aggregator executable with the election ID.
-    
-    Process:
-      1. The aggregator executable (./vote_aggregator) is called with the election_id.
-      2. The aggregator loads the crypto context from <election_id>_credentials/cryptocontext.bin,
-         scans the "encrypted_votes/" folder for files ending with "_encrypted_vote.bin",
-         aggregates them using homomorphic addition, and saves the aggregated result.
-      3. The aggregator prints the aggregated ciphertext (e.g. Base64‑encoded) to stdout.
-      
+    Aggregates and decrypts votes using the C++ aggregator binary.
+
+    The aggregator performs:
+    1. CryptoContext and private key deserialization
+    2. Vote aggregation from encrypted_votes/
+    3. Homomorphic addition and decryption
+    4. Outputs result including decrypted vector and match status
+
     Returns:
-      A JSON object with key "aggregated_cipher_text" containing the aggregated ciphertext.
-      
-    Raises:
-      HTTPException if aggregation fails.
+        - message: Success status
+        - decrypted_result: Final plaintext result vector
+        - vote_count: Number of votes aggregated
+        - context_match: Whether ciphertext context matched original
     """
     try:
         election_id = req.election_id
-        
-        # Call the aggregator executable with the election_id.
+
+        # Run the C++ aggregator binary
         result = subprocess.run(
             ["./vote_aggregator", election_id],
             capture_output=True,
             text=True
         )
-        
+
         if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Aggregator failed: {result.stderr}")
-        
-        aggregated_cipher_text = result.stdout.strip()
-        if not aggregated_cipher_text:
-            raise HTTPException(status_code=500, detail="Aggregated ciphertext not produced by aggregator")
-        
+            raise HTTPException(status_code=500, detail=f"Aggregator failed:\n{result.stderr}")
+
+        stdout_lines = result.stdout.strip().split("\n")
+        decrypted_result = None
+        vote_count = None
+        context_match = None
+        processed_files = []
+
+        for line in stdout_lines:
+            if line.startswith("Processing file:"):
+                processed_files.append(line.split("Processing file:")[1].strip())
+            elif line.startswith("Decrypted result:"):
+                decrypted_result = line.split("Decrypted result:")[1].strip()
+            elif line.startswith("Aggregated"):
+                try:
+                    vote_count = int(line.split()[1])
+                except:
+                    vote_count = None
+            elif line.startswith("Associated context match?"):
+                context_match = line.split("Associated context match?")[1].strip()
+
         return {
             "message": "Aggregation successful",
-            "aggregated_cipher_text": aggregated_cipher_text
+            "decrypted_result": decrypted_result,
+            "vote_count": vote_count,
+            "context_match": context_match,
+            "processed_files": processed_files
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
+    
+    
 # 🚀 FastAPI entry point
 if __name__ == "__main__":
     import uvicorn

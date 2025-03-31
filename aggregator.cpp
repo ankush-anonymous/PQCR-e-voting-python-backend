@@ -28,6 +28,7 @@ int main(int argc, char* argv[]) {
     // Construct file paths for the crypto context.
     string credentialsFolder = electionId + "_credentials/";
     string contextFile = credentialsFolder + "cryptocontext.bin";
+    string privateKeyFile = credentialsFolder + "private_key.bin";
     
     // Deserialize crypto context.
     CryptoContext<DCRTPoly> cc;
@@ -40,7 +41,13 @@ int main(int argc, char* argv[]) {
     // cc->Enable(KEYSWITCH);
     // cc->Enable(LEVELEDSHE);
 
-  
+    // Deserialize private key
+    PrivateKey<DCRTPoly> privateKey;
+    if (!Serial::DeserializeFromFile(privateKeyFile, privateKey, SerType::BINARY)) {
+        cerr << "Failed to deserialize private key" << endl;
+        return 1;
+    }
+
 
    
     // Directory containing encrypted vote files.
@@ -85,7 +92,29 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-   
+    try {
+        Plaintext decryptedResult;
+        cc->Decrypt(privateKey, aggregatedVote, &decryptedResult);
+        
+        // Get the complete decrypted vector
+        const vector<int64_t>& votes = decryptedResult->GetCoefPackedValue();
+        
+        // Print full vector without truncation
+        cout << "Decrypted result: [";
+        for (size_t i = 0; i < votes.size(); ++i) {
+            cout << votes[i];
+            if (i != votes.size() - 1) {
+                cout << ", ";
+            }
+            // Add line breaks for readability (every 16 elements)
+            if ((i + 1) % 16 == 0) cout << "\n ";
+        }
+        cout << "]" << endl;
+        
+    } catch (const exception& e) {
+        cerr << "Decryption failed: " << e.what() << endl;
+        return 1;
+    }
 
     
     // Save aggregated vote to a file.
@@ -96,9 +125,11 @@ int main(int argc, char* argv[]) {
     }
     
     cout << "Aggregated " << voteCount << " votes and saved the result to " << aggregatedFile << endl;
+
     cout << "Associated context match? " 
     << std::boolalpha 
     << (aggregatedVote->GetCryptoContext() == cc) 
     << endl;
+    
     return 0;
 }
