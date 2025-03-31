@@ -85,6 +85,26 @@ RUN g++ -o /app/encrypt_vote /app/encrypt_vote.cpp \
     -L/app/openfhe-development/build/lib \
     -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
 
+RUN g++ -o /app/vote_aggregator /app/aggregator.cpp \
+    -I/app/openfhe-development/src/core/include \
+    -I/app/openfhe-development/src/pke/include \
+    -I/app/openfhe-development/src/binfhe/include \
+    -I/app/openfhe-development/build/src/core \
+    -I/app/openfhe-development/third-party/cereal/include \
+    -I/app/openfhe-development/src/core/include/serialization \
+    -I/app/openfhe-development/src/pke/include/serialization \
+    -L/app/openfhe-development/build/lib \
+    -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
+
+RUN g++ -o /app/decrypt_vote /app/decrypt_vote.cpp \
+    -I/app/openfhe-development/src/core/include \
+    -I/app/openfhe-development/src/pke/include \
+    -I/app/openfhe-development/src/binfhe/include \
+    -I/app/openfhe-development/build/src/core \
+    -I/app/openfhe-development/third-party/cereal/include \
+    -L/app/openfhe-development/build/lib \
+    -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
+
 # ============================
 # 📌 Clone and Build Picnic (Picnic-based ZKP)
 # ============================
@@ -105,20 +125,7 @@ RUN gcc -O2 -D__LINUX__ -D__X64__ -Wno-error=stringop-overflow \
     -L/app/picnic -lpicnic -L/app/picnic/sha3 -lshake \
     -lssl -lcrypto
 
-# ============================
-# 📌 Compile C++ Aggregator Binary (New Code)
-# ============================
-RUN g++ -o /app/vote_aggregator /app/aggregator.cpp \
-    -I/app/openfhe-development/src/core/include \
-    -I/app/openfhe-development/src/pke/include \
-    -I/app/openfhe-development/src/binfhe/include \
-    -I/app/openfhe-development/build/src/core \
-    -I/app/openfhe-development/third-party/cereal/include \
-    -I/app/openfhe-development/src/core/include/serialization \
-    -I/app/openfhe-development/src/pke/include/serialization \
-    -L/app/openfhe-development/build/lib \
-    -lOPENFHEcore -lOPENFHEpke -lOPENFHEbinfhe -std=c++17
-    
+
 # Expose the FastAPI port
 EXPOSE 8000
 

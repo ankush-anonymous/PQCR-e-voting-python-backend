@@ -67,6 +67,8 @@ int main(int argc, char *argv[]) {
     cryptoContext->Enable(KEYSWITCH);
     cryptoContext->Enable(LEVELEDSHE);
 
+    
+
     // **Generate Key Pair**
     KeyPair<DCRTPoly> keyPair = cryptoContext->KeyGen();
     if (!keyPair.good()) {

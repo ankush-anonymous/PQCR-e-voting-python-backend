@@ -62,6 +62,9 @@ class Vote(BaseModel):
 class SaveEncrytVoteRequest(BaseModel):
     votes: List[Vote]
 
+class AggregateVotesRequest(BaseModel):
+    election_id: str
+
 
 
 @app.get("/")
@@ -425,43 +428,39 @@ async def receive_votes_from_node_server(req: SaveEncrytVoteRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/aggregate-votes")
-async def aggregate_votes():
+async def aggregate_votes(req: AggregateVotesRequest):
     """
-    Aggregates votes by sending the file path to the C++ aggregator executable.
+    Aggregates votes by calling the C++ aggregator executable with the election ID.
     
-    The process is as follows:
-      1. Construct the file path from the provided election_id.
-      2. Check if the file exists.
-      3. Call the C++ executable "./vote_aggregator" with the file path as an argument.
-      4. Capture and return the final aggregated cipher text.
-    
+    Process:
+      1. The aggregator executable (./vote_aggregator) is called with the election_id.
+      2. The aggregator loads the crypto context from <election_id>_credentials/cryptocontext.bin,
+         scans the "encrypted_votes/" folder for files ending with "_encrypted_vote.bin",
+         aggregates them using homomorphic addition, and saves the aggregated result.
+      3. The aggregator prints the aggregated ciphertext (e.g. Base64‑encoded) to stdout.
+      
     Returns:
-        A JSON object with the aggregated cipher text.
-    
+      A JSON object with key "aggregated_cipher_text" containing the aggregated ciphertext.
+      
     Raises:
-        HTTPException: If the file does not exist or if the C++ aggregator fails.
+      HTTPException if aggregation fails.
     """
     try:
-        # Construct the file path where votes are stored
-        folder_name = "tally_votes"
-        file_path = os.path.join(folder_name, f"encrypted_votes.json")
+        election_id = req.election_id
         
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail=f"Encrypted Votes File not found ")
-        
-        # Call the C++ aggregator executable with the file path argument
+        # Call the aggregator executable with the election_id.
         result = subprocess.run(
-            ["./vote_aggregator", file_path],
+            ["./vote_aggregator", election_id],
             capture_output=True,
             text=True
         )
         
-        # Check if the C++ process executed successfully
         if result.returncode != 0:
             raise HTTPException(status_code=500, detail=f"Aggregator failed: {result.stderr}")
         
-        # Strip any extra whitespace/newlines from the output
         aggregated_cipher_text = result.stdout.strip()
+        if not aggregated_cipher_text:
+            raise HTTPException(status_code=500, detail="Aggregated ciphertext not produced by aggregator")
         
         return {
             "message": "Aggregation successful",
@@ -469,7 +468,6 @@ async def aggregate_votes():
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 
 # 🚀 FastAPI entry point
 if __name__ == "__main__":

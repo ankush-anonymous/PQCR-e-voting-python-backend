@@ -68,9 +68,18 @@ void encryptVector(const string& electionId, const string& voterId, const vector
         if (!Serial::DeserializeFromFile(contextFile, cc, SerType::BINARY)) {
             throw runtime_error("Failed to deserialize crypto context from " + contextFile);
         }
-        cc->Enable(PKE);
-        cc->Enable(KEYSWITCH);
-        cc->Enable(LEVELEDSHE);
+        // cc->Enable(PKE);
+        // cc->Enable(KEYSWITCH);
+        // cc->Enable(LEVELEDSHE);
+
+        auto params = cc->GetCryptoParameters();
+        auto elemParams = params->GetElementParams();
+
+        cout << "🔎 Plaintext Modulus: " << params->GetPlaintextModulus() << endl;
+        cout << "🔎 Ring Dimension:    " << elemParams->GetCyclotomicOrder() / 2 << endl;
+        cout << "🔎 Modulus:           " << elemParams->GetModulus() << endl;
+
+
 
         // Deserialize public key.
         PublicKey<DCRTPoly> publicKey;
@@ -84,6 +93,11 @@ void encryptVector(const string& electionId, const string& voterId, const vector
         if (!ciphertext) {
             throw runtime_error("Failed to encrypt the vector");
         }
+
+        cout << "Associated context match? " 
+        << std::boolalpha 
+        << (ciphertext->GetCryptoContext() == cc) 
+        << endl;
 
         // Ensure the output folder exists.
         string outputFolder = "encrypted_votes/";

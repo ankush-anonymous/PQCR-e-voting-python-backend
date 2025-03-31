@@ -1,175 +1,104 @@
+#include <openfhe.h>
+#include <filesystem>
 #include <iostream>
-#include <fstream>
-#include <sstream>
-#include <string>
 #include <vector>
-#include "openfhe.h"
-#include <nlohmann/json.hpp>
-#include <exception>
-#include <algorithm>
+#include <string>
+#include <sstream>
+#include <stdexcept>
 
-using namespace std;
+#include "ciphertext-ser.h"
+#include "cryptocontext-ser.h"
+#include "key/key-ser.h"
+#include "scheme/bfvrns/bfvrns-ser.h"
+
+
 using namespace lbcrypto;
-using json = nlohmann::json;
-
-// Base64 character set.
-static const string base64_chars =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-    "abcdefghijklmnopqrstuvwxyz"
-    "0123456789+/";
-
-// Base64 encoding function.
-string base64Encode(const string &in) {
-    string out;
-    int val = 0, valb = -6;
-    for (unsigned char c : in) {
-        val = (val << 8) + c;
-        valb += 8;
-        while (valb >= 0) {
-            out.push_back(base64_chars[(val >> valb) & 0x3F]);
-            valb -= 6;
-        }
-    }
-    if (valb > -6) {
-        out.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
-    }
-    while (out.size() % 4) {
-        out.push_back('=');
-    }
-    return out;
-}
-
-// Base64 decoding function.
-string base64Decode(const string &in) {
-    string out;
-    vector<int> T(256, -1);
-    for (int i = 0; i < 64; i++) {
-        T[base64_chars[i]] = i;
-    }
-    int val = 0, valb = -8;
-    for (unsigned char c : in) {
-        if (T[c] == -1) break;
-        val = (val << 6) + T[c];
-        valb += 6;
-        if (valb >= 0) {
-            out.push_back(char((val >> valb) & 0xFF));
-            valb -= 8;
-        }
-    }
-    return out;
-}
+using namespace std;
+namespace fs = std::filesystem;
 
 int main(int argc, char* argv[]) {
-    // (Optional) Register all serializable types if needed.
-    // Serial::RegisterAllPalisadeSerialization();  // Uncomment if your version requires it
-
+    // Expected usage: ./aggregator <election_id>
     if (argc != 2) {
-        cerr << "Usage: " << argv[0] << " <votes_file>" << endl;
+        cerr << "Usage: " << argv[0] << " <election_id>" << endl;
         return 1;
     }
-    string votesFile = argv[1];
-    string outputFile = votesFile.substr(0, votesFile.find_last_of('.')) + "_aggregated_result.json";
-
-    // Read votes from JSON file.
-    cout << "Reading votes from " << votesFile << endl;
-    ifstream votesStream(votesFile);
-    if (!votesStream.is_open()) {
-        cerr << "Error: Could not open votes file." << endl;
-        return 1;
-    }
-
-    json votesJson;
-    try {
-        votesStream >> votesJson;
-    } catch (const exception& e) {
-        cerr << "Error parsing JSON: " << e.what() << endl;
-        return 1;
-    }
-    votesStream.close();
-
+    
+    string electionId = argv[1];
+    
+    // Construct file paths for the crypto context.
+    string credentialsFolder = electionId + "_credentials/";
+    string contextFile = credentialsFolder + "cryptocontext.bin";
+    
     // Deserialize crypto context.
-    cout << "Deserializing crypto context..." << endl;
     CryptoContext<DCRTPoly> cc;
-    if (!Serial::DeserializeFromFile("cryptocontext.txt", cc, SerType::BINARY)) {
-        cerr << "Error: Could not load crypto context." << endl;
+    if (!Serial::DeserializeFromFile(contextFile, cc, SerType::BINARY)) {
+        cerr << "Failed to deserialize crypto context" << endl;
         return 1;
     }
+    // Enable necessary features (must match keygen).
+    // cc->Enable(PKE);
+    // cc->Enable(KEYSWITCH);
+    // cc->Enable(LEVELEDSHE);
 
-    // Extract encrypted votes from JSON.
-    vector<string> encryptedVotes;
-    try {
-        for (const auto& voteObj : votesJson["votes"]) {
-            encryptedVotes.push_back(voteObj["encrypted_vote"].get<string>());
-        }
-    } catch (const exception& e) {
-        cerr << "Error extracting votes: " << e.what() << endl;
+  
+
+   
+    // Directory containing encrypted vote files.
+    string votesFolder = "encrypted_votes/";
+    if (!fs::exists(votesFolder)) {
+        cerr << "Votes folder does not exist: " << votesFolder << endl;
         return 1;
     }
-
-    cout << "Processing " << encryptedVotes.size() << " votes..." << endl;
-
-    if (encryptedVotes.empty()) {
-        cerr << "Error: No votes found." << endl;
-        return 1;
-    }
-
-    // Aggregate votes using homomorphic addition.
+    
     Ciphertext<DCRTPoly> aggregatedVote;
     bool firstVote = true;
-
-    for (const auto& encVote : encryptedVotes) {
-        Ciphertext<DCRTPoly> currVote;
-        // Decode the Base64-encoded vote back into binary.
-        string decodedVote = base64Decode(encVote);
-        istringstream iss(decodedVote);
-        try {
-            Serial::Deserialize(currVote, iss, SerType::BINARY);
-        } catch (const exception& e) {
-            cerr << "Error deserializing a vote: " << e.what() << endl;
-            return 1;
-        }
-
-        if (firstVote) {
-            aggregatedVote = currVote;
-            firstVote = false;
-        } else {
-            try {
-                aggregatedVote = cc->EvalAdd(aggregatedVote, currVote);
-            } catch (const exception& e) {
-                cerr << "Error during vote aggregation: " << e.what() << endl;
-                return 1;
+    int voteCount = 0;
+    
+    // Suffix to match.
+    const string suffix = "_encrypted_vote.bin"; // 19 characters
+    
+    // Iterate over files in the votes folder.
+    for (const auto& entry : fs::directory_iterator(votesFolder)) {
+        if (entry.is_regular_file()) {
+            string filePath = entry.path().string();
+            // Check if the filename ends with the required suffix.
+            if (filePath.size() >= suffix.size() && filePath.substr(filePath.size() - suffix.size()) == suffix) {
+                cout << "Processing file: " << filePath << endl;
+                Ciphertext<DCRTPoly> currVote;
+                if (!Serial::DeserializeFromFile(filePath, currVote, SerType::BINARY)) {
+                    cerr << "Failed to deserialize vote from file: " << filePath << endl;
+                    continue; // Optionally, you can exit here instead.
+                }
+                if (firstVote) {
+                    aggregatedVote = currVote;
+                    firstVote = false;
+                } else {
+                    aggregatedVote = cc->EvalAdd(aggregatedVote, currVote);
+                }
+                voteCount++;
             }
         }
     }
-
-    // Serialize the final aggregated ciphertext.
-    ostringstream oss;
-    try {
-        Serial::Serialize(aggregatedVote, oss, SerType::BINARY);
-    } catch (const exception& e) {
-        cerr << "Error serializing aggregated vote: " << e.what() << endl;
-        return 1;
-    }
-    string serializedResult = oss.str();
-
-    // Base64 encode the aggregated ciphertext so it is valid UTF-8 for JSON.
-    string aggregatedCiphertextBase64 = base64Encode(serializedResult);
-
-    // Output results to file.
-    ofstream outFile(outputFile);
-    if (!outFile.is_open()) {
-        cerr << "Error: Could not open output file." << endl;
+    
+    if (voteCount == 0) {
+        cerr << "No encrypted votes found in " << votesFolder << endl;
         return 1;
     }
 
-    json resultJson;
-    resultJson["total_votes"] = encryptedVotes.size();
-    resultJson["aggregated_encrypted_vote"] = aggregatedCiphertextBase64;
+   
 
-    outFile << resultJson.dump(4); // Pretty print with 4-space indent.
-    outFile.close();
-
-    cout << "Vote aggregation complete. Encrypted result saved to " << outputFile << endl;
-
+    
+    // Save aggregated vote to a file.
+    string aggregatedFile = votesFolder + "aggregated_vote.bin";
+    if (!Serial::SerializeToFile(aggregatedFile, aggregatedVote, SerType::BINARY)) {
+        cerr << "Failed to serialize aggregated vote to " << aggregatedFile << endl;
+        return 1;
+    }
+    
+    cout << "Aggregated " << voteCount << " votes and saved the result to " << aggregatedFile << endl;
+    cout << "Associated context match? " 
+    << std::boolalpha 
+    << (aggregatedVote->GetCryptoContext() == cc) 
+    << endl;
     return 0;
 }
